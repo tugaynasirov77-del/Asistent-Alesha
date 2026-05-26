@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 from db import init_db
 from monitor import run_monitor
@@ -12,12 +13,16 @@ logging.basicConfig(
 )
 
 
+def _bot_thread():
+    """Бот живёт в отдельном asyncio loop в своём потоке —
+    иначе конфликтует с pyrogram, который любит владеть основным loop."""
+    asyncio.run(run_bot())
+
+
 async def main():
     await init_db()
-    await asyncio.gather(
-        run_monitor(),
-        run_bot(),
-    )
+    threading.Thread(target=_bot_thread, daemon=True, name="business-bot").start()
+    await run_monitor()
 
 
 if __name__ == "__main__":

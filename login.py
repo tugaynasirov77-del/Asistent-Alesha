@@ -1,18 +1,21 @@
-"""Разовый скрипт для первой авторизации userbot.
+"""Разовая авторизация Telethon userbot.
 Запусти один раз: python login.py
-Введи номер телефона и код из Telegram — создастся userbot.session.
+Введи телефон → код из Telegram → 2FA если есть.
+Создастся файл userbot.session — больше логин не нужен.
 """
-from pyrogram import Client
+import asyncio
+from telethon import TelegramClient
 from config import SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH
 
 
-def main():
-    app = Client(SESSION_NAME, api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH)
-    with app:
-        me = app.get_me()
-        print(f"\n✓ Залогинен как: {me.first_name} (@{me.username}) id={me.id}")
-        print("✓ Сессия сохранена. Теперь можно запускать: python main.py")
+async def main():
+    client = TelegramClient(SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+    await client.start()
+    me = await client.get_me()
+    print(f"\n✓ Залогинен как: {me.first_name} (@{me.username}) id={me.id}")
+    print("✓ Сессия сохранена. Запускай: python main.py")
+    await client.disconnect()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

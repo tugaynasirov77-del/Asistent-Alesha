@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import random
-from pyrogram import Client, filters
-from pyrogram.types import Message
+
+from telethon import TelegramClient, events
+from telegram import Bot
+from telegram.constants import ParseMode
 
 from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TARGET_GROUPS,
@@ -13,20 +15,12 @@ from db import save_lead, mark_seen
 
 log = logging.getLogger(__name__)
 
-user_app = Client(
-    SESSION_NAME,
-    api_id=TELEGRAM_API_ID,
-    api_hash=TELEGRAM_API_HASH,
-)
+user_client = TelegramClient(SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
+notifier_bot = Bot(token=BOT_TOKEN)
 
-# Отдельный bot-клиент для уведомлений мне (Pyrogram, чтобы делить event loop)
-notifier_app = Client(
-    "notifier_bot",
-    api_id=TELEGRAM_API_ID,
-    api_hash=TELEGRAM_API_HASH,
-    bot_token=BOT_TOKEN,
-    in_memory=True,
-)
+
+def _target_set() -> set[str]:
+    return {g.lower() for g in TARGET_GROUPS}
 
 
 async def _notify_me(lead: dict):
@@ -43,43 +37,48 @@ async def _notify_me(lead: dict):
         f"<b>Черновик ответа:</b>\n<code>{lead['draft_reply']}</code>"
     )
     try:
-        await notifier_app.send_message(MY_TELEGRAM_ID, text, parse_mode="html")
+        await notifier_bot.send_message(
+            chat_id=MY_TELEGRAM_ID, text=text, parse_mode=ParseMode.HTML
+        )
     except Exception as e:
         log.exception("Failed to notify: %s", e)
 
 
-@user_app.on_message(filters.group & ~filters.service & ~filters.me)
-async def on_group_message(_, message: Message):
-    if not message.text:
+@user_client.on(events.NewMessage(incoming=True))
+async def on_message(event: events.NewMessage.Event):
+    if not event.is_group and not event.is_channel:
         return
-    chat = message.chat
-    chat_uname = (chat.username or "").lower()
-    if TARGET_GROUPS and chat_uname not in {g.lower() for g in TARGET_GROUPS}:
+    if not event.message.message:
         return
 
-    if not await mark_seen(chat.id, message.id):
+    chat = await event.get_chat()
+    chat_uname = (getattr(chat, "username", None) or "").lower()
+    targets = _target_set()
+    if targets and chat_uname not in targets:
         return
 
-    # рандомная задержка перед обработкой (имитация человека)
+    if not await mark_seen(event.chat_id, event.id):
+        return
+
     await asyncio.sleep(random.uniform(3, 7))
 
-    user = message.from_user
-    if not user or user.is_bot:
+    sender = await event.get_sender()
+    if sender is None or getattr(sender, "bot", False):
         return
 
-    author = user.username or user.first_name or str(user.id)
-    chat_title = chat.title or chat_uname
+    author = sender.username or sender.first_name or str(sender.id)
+    chat_title = getattr(chat, "title", None) or chat_uname
 
-    result = await detect_lead(message.text, author, chat_title)
+    result = await detect_lead(event.message.message, author, chat_title)
     if not result.get("match"):
         return
 
     lead = {
-        "user_id": user.id,
-        "username": user.username,
-        "name": user.first_name,
+        "user_id": sender.id,
+        "username": sender.username,
+        "name": sender.first_name,
         "chat_title": chat_title,
-        "message": message.text,
+        "message": event.message.message,
         "reason": result.get("reason", ""),
         "draft_reply": result.get("draft_reply", ""),
     }
@@ -89,7 +88,6 @@ async def on_group_message(_, message: Message):
 
 
 async def run_monitor():
-    await notifier_app.start()
-    await user_app.start()
+    await user_client.start()
     log.info("Monitor started. Watching groups: %s", TARGET_GROUPS or "(all)")
-    await asyncio.Event().wait()
+    await user_client.run_until_disconnected()

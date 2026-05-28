@@ -9,7 +9,6 @@ from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
-# OpenRouter — OpenAI-совместимый прокси к Claude, обходит geo-блок Anthropic
 API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
 BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 MODEL = os.getenv("CLAUDE_MODEL", "anthropic/claude-sonnet-4.5")
@@ -42,6 +41,13 @@ LEAD_DETECTOR_PROMPT = """Ты — детектор лидов для специ
 - если матч: {"match": true, "reason": "<1-2 предложения почему>", "draft_reply": "<дружелюбный персональный ответ от первого лица, без продажности, ссылается на их конкретную проблему, 2-4 предложения, без эмодзи-спама>"}
 - если нет: {"match": false}
 """
+
+
+REGEN_STYLES = {
+    "friendly": "более дружеский, тёплый, как старому знакомому",
+    "expert": "более экспертный, через ценность и кейс",
+    "short": "максимально короткий, 1-2 предложения, прямой",
+}
 
 
 def _extract_json(text: str) -> dict | None:
@@ -77,3 +83,32 @@ async def detect_lead(message_text: str, author: str, chat_title: str) -> dict:
     except Exception as e:
         log.exception("detect_lead failed: %s", e)
         return {"match": False}
+
+
+async def regenerate_draft(message_text: str, author: str, chat_title: str,
+                           previous_draft: str, style: str = "friendly") -> str:
+    style_hint = REGEN_STYLES.get(style, REGEN_STYLES["friendly"])
+    prompt = (
+        f"{LEAD_DETECTOR_PROMPT}\n\n"
+        f"ВАЖНО: предыдущий черновик ответа: «{previous_draft}»\n"
+        f"Сделай НОВЫЙ вариант draft_reply — {style_hint}. "
+        f"Это уже точно лид, поле match всегда true."
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=MODEL,
+            max_tokens=600,
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": f"Чат: {chat_title}\nАвтор: {author}\n\nСообщение:\n{message_text}",
+                },
+            ],
+        )
+        text = resp.choices[0].message.content or ""
+        data = _extract_json(text)
+        return (data or {}).get("draft_reply") or previous_draft
+    except Exception as e:
+        log.exception("regenerate_draft failed: %s", e)
+        return previous_draft

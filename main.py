@@ -3,6 +3,7 @@ import logging
 
 from db import init_db
 from monitor import run_monitor
+from bot_handlers import init_bot, shutdown_bot
 
 
 logging.basicConfig(
@@ -13,7 +14,11 @@ logging.basicConfig(
 
 async def main():
     await init_db()
-    await run_monitor()
+    bot_app = await init_bot()
+    try:
+        await run_monitor()
+    finally:
+        await shutdown_bot(bot_app)
 
 
 if __name__ == "__main__":

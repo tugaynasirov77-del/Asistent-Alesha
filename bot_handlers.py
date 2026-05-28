@@ -18,6 +18,21 @@ _application: Application | None = None
 
 
 _TEMP_BADGE = {"hot": "🔥 HOT", "warm": "☕ WARM", "cold": "🧊 COLD"}
+_STATUS_LABEL = {"new": "🆕 не отвечал", "contacted": "✅ связался",
+                 "closed": "🎉 закрыт", "not_lead": "❌ не лид"}
+
+
+def _format_history(history: list[dict]) -> str:
+    if not history:
+        return ""
+    lines = ["", "<b>📌 Был раньше:</b>"]
+    for h in history[:3]:
+        status = _STATUS_LABEL.get(h["status"], h["status"])
+        snippet = (h.get("message") or "").replace("\n", " ")[:60]
+        date = (h.get("created_at") or "")[:10]
+        chat = h.get("chat_title") or "—"
+        lines.append(f"• {date} [{chat}] {status} — «{snippet}»")
+    return "\n".join(lines)
 
 
 def render_lead_text(lead: dict) -> str:
@@ -28,6 +43,7 @@ def render_lead_text(lead: dict) -> str:
     temp = (lead.get("temperature") or "warm").lower()
     score = lead.get("score") or 5
     badge = _TEMP_BADGE.get(temp, "☕ WARM")
+    history_block = _format_history(lead.get("_history") or [])
     return (
         f"🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>\n\n"
         f"<b>Кто:</b> {name} ({uname_str})\n"
@@ -35,6 +51,7 @@ def render_lead_text(lead: dict) -> str:
         f"<b>Сообщение:</b>\n{lead['message']}\n\n"
         f"<b>Почему матч:</b>\n{lead['reason']}\n\n"
         f"<b>Черновик ответа:</b>\n<i>{lead['draft_reply']}</i>"
+        f"{history_block}"
     )
 
 

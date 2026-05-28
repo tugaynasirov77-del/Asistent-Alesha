@@ -8,7 +8,7 @@ from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TARGET_GROUPS, SESSION_NAME,
 )
 from claude_client import detect_lead
-from db import save_lead, mark_seen, get_lead, recent_lead_for_user
+from db import save_lead, mark_seen, get_lead, recent_lead_for_user, history_for_user
 from bot_handlers import send_lead_notification
 
 log = logging.getLogger(__name__)
@@ -68,12 +68,12 @@ async def on_message(event: events.NewMessage.Event):
     if not result.get("match"):
         return
 
-    # Анти-дубль: если этот же автор уже был лидом за последние 7 дней — не пушим повторно
-    prev = await recent_lead_for_user(sender.id, days=7)
+    # Анти-дубль: если уже был лид за последние 3 дня — не пушим повторно
+    prev = await recent_lead_for_user(sender.id, days=3)
     if prev:
         log.info(
-            "Skip duplicate lead from user_id=%s author=%s (prev lead id=%s)",
-            sender.id, author, prev["id"],
+            "Skip duplicate lead from user_id=%s (prev id=%s within 3d)",
+            sender.id, prev["id"],
         )
         return
 
@@ -91,6 +91,9 @@ async def on_message(event: events.NewMessage.Event):
         temperature=result.get("temperature", "warm"),
     )
     lead = await get_lead(lead_id)
+    # подкладываем историю по этому user_id (для блока "уже был раньше")
+    history = await history_for_user(sender.id, limit=5)
+    lead["_history"] = [h for h in history if h["id"] != lead_id]
     await send_lead_notification(lead_id, lead)
     log.info("Lead saved id=%s author=%s", lead_id, author)
 

@@ -78,6 +78,18 @@ async def update_lead_status(lead_id: int, status: str):
         await db.commit()
 
 
+async def history_for_user(user_id: int, limit: int = 5) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM leads WHERE user_id = ?
+               ORDER BY id DESC LIMIT ?""",
+            (user_id, limit),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
 async def leads_since(hours: int = 24) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row

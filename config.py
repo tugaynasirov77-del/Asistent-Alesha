@@ -11,7 +11,10 @@ def _req(key: str) -> str:
     return v
 
 
-ANTHROPIC_API_KEY = _req("ANTHROPIC_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+if not (ANTHROPIC_API_KEY or OPENROUTER_API_KEY):
+    raise RuntimeError("Нужен ANTHROPIC_API_KEY или OPENROUTER_API_KEY")
 
 TELEGRAM_API_ID = int(_req("TELEGRAM_API_ID"))
 TELEGRAM_API_HASH = _req("TELEGRAM_API_HASH")

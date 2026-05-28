@@ -1,6 +1,6 @@
 telethon>=1.36.0
 cryptg>=0.4.0
 python-telegram-bot==21.6
-anthropic>=0.39.0
+openai>=1.50.0
 aiosqlite>=0.20.0
 python-dotenv>=1.0.1

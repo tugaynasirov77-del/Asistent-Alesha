@@ -15,10 +15,17 @@ CREATE TABLE IF NOT EXISTS leads (
     message_id INTEGER,
     reason TEXT,
     draft_reply TEXT,
-    score INTEGER DEFAULT 5,         -- 1..10 "горячесть"
-    temperature TEXT DEFAULT 'warm', -- hot / warm / cold
+    score INTEGER DEFAULT 5,
+    temperature TEXT DEFAULT 'warm',
+    product_type TEXT DEFAULT 'custom', -- liva / custom / both
     status TEXT DEFAULT 'new',
     created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS dynamic_chats (
+    username TEXT PRIMARY KEY,
+    added_by INTEGER,
+    added_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS seen_messages (
@@ -44,19 +51,71 @@ async def init_db():
 
 async def save_lead(user_id, username, name, chat_title, chat_id, message,
                     message_id, reason, draft_reply,
-                    score: int = 5, temperature: str = "warm") -> int:
+                    score: int = 5, temperature: str = "warm",
+                    product_type: str = "custom") -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO leads
                (user_id, username, name, chat_title, chat_id, message, message_id,
-                reason, draft_reply, score, temperature, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                reason, draft_reply, score, temperature, product_type, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, username, name, chat_title, chat_id, message, message_id,
-             reason, draft_reply, score, temperature,
+             reason, draft_reply, score, temperature, product_type,
              datetime.utcnow().isoformat()),
         )
         await db.commit()
         return cur.lastrowid
+
+
+async def add_dynamic_chat(username: str, added_by: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute(
+                "INSERT INTO dynamic_chats (username, added_by, added_at) VALUES (?, ?, ?)",
+                (username.lower(), added_by, datetime.utcnow().isoformat()),
+            )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def remove_dynamic_chat(username: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM dynamic_chats WHERE username = ?", (username.lower(),)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_dynamic_chats() -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT username FROM dynamic_chats ORDER BY username") as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def lead_stats(hours: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT
+                 COUNT(*) AS total,
+                 SUM(CASE WHEN temperature='hot' THEN 1 ELSE 0 END) AS hot,
+                 SUM(CASE WHEN temperature='warm' THEN 1 ELSE 0 END) AS warm,
+                 SUM(CASE WHEN temperature='cold' THEN 1 ELSE 0 END) AS cold,
+                 SUM(CASE WHEN status='contacted' THEN 1 ELSE 0 END) AS contacted,
+                 SUM(CASE WHEN status='closed' THEN 1 ELSE 0 END) AS closed,
+                 SUM(CASE WHEN product_type='liva' THEN 1 ELSE 0 END) AS liva,
+                 SUM(CASE WHEN product_type='custom' THEN 1 ELSE 0 END) AS custom,
+                 SUM(CASE WHEN product_type='both' THEN 1 ELSE 0 END) AS both
+               FROM leads
+               WHERE datetime(created_at) >= datetime('now', ?)""",
+            (f'-{hours} hours',),
+        ) as cur:
+            row = await cur.fetchone()
+    keys = ["total", "hot", "warm", "cold", "contacted", "closed", "liva", "custom", "both"]
+    return {k: row[i] or 0 for i, k in enumerate(keys)}
 
 
 async def get_lead(lead_id: int) -> dict | None:

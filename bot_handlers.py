@@ -1,4 +1,4 @@
-"""Бот-уведомитель: рассылает лиды всем подписчикам, обрабатывает кнопки."""
+"""Бот-уведомитель: лиды, команды управления, рассылка подписчикам."""
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -8,10 +8,12 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-from config import BOT_TOKEN, MY_TELEGRAM_ID
+from config import BOT_TOKEN, MY_TELEGRAM_ID, TARGET_GROUPS
 from db import (
     get_lead, update_lead_draft, update_lead_status,
     add_subscriber, all_subscribers, remove_subscriber,
+    leads_since, lead_stats,
+    add_dynamic_chat, remove_dynamic_chat, list_dynamic_chats,
 )
 from claude_client import regenerate_draft
 
@@ -19,13 +21,18 @@ log = logging.getLogger(__name__)
 
 _application: Application | None = None
 
-
 _TEMP_BADGE = {"hot": "🔥 ГОРЯЧИЙ", "warm": "☕ ТЁПЛЫЙ", "cold": "🧊 ХОЛОДНЫЙ"}
+_TEMP_SHORT = {"hot": "🔥", "warm": "☕", "cold": "🧊"}
 _STATUS_LABEL = {
     "new": "🆕 не отвечал",
     "contacted": "✅ связался",
     "closed": "🎉 закрыт",
     "not_lead": "❌ не лид",
+}
+_PRODUCT_BADGE = {
+    "liva": "🏪 LIVA",
+    "custom": "🛠 КАСТОМ",
+    "both": "🎯 ОБА",
 }
 
 
@@ -49,10 +56,13 @@ def render_lead_text(lead: dict) -> str:
     uname_str = f"@{username}" if username else "без username"
     temp = (lead.get("temperature") or "warm").lower()
     score = lead.get("score") or 5
+    product = (lead.get("product_type") or "custom").lower()
     badge = _TEMP_BADGE.get(temp, "☕ ТЁПЛЫЙ")
+    product_badge = _PRODUCT_BADGE.get(product, "🛠 КАСТОМ")
+    urgent = "🚨🚨🚨 СРОЧНО! 🚨🚨🚨\n\n" if score >= 10 else ""
     history_block = _format_history(lead.get("_history") or [])
     return (
-        f"🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>\n\n"
+        f"{urgent}🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>  {product_badge}\n\n"
         f"<b>Кто:</b> {name} ({uname_str})\n"
         f"<b>Чат:</b> {chat_title}\n\n"
         f"<b>Сообщение:</b>\n{lead['message']}\n\n"
@@ -77,33 +87,40 @@ def lead_keyboard(lead_id: int, username: str | None, user_id: int) -> InlineKey
     ])
 
 
-async def _broadcast(text: str, parse_mode=ParseMode.HTML, reply_markup=None):
-    """Шлёт сообщение всем подписчикам + владельцу."""
+async def _broadcast(text: str, parse_mode=ParseMode.HTML, reply_markup=None,
+                     disable_notification: bool = False):
     if _application is None:
         log.error("Bot application not initialized")
         return
     ids = set(await all_subscribers())
-    ids.add(MY_TELEGRAM_ID)  # владелец всегда получает
+    ids.add(MY_TELEGRAM_ID)
     for chat_id in ids:
         try:
             await _application.bot.send_message(
                 chat_id=chat_id, text=text,
                 parse_mode=parse_mode, reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         except Exception as e:
             log.warning("Broadcast failed for %s: %s", chat_id, e)
 
 
 async def send_lead_notification(lead_id: int, lead: dict):
+    # Горячие лиды (score 9-10) — со звуком, остальные молча
+    score = lead.get("score") or 5
+    urgent = score >= 9
     await _broadcast(
         text=render_lead_text(lead),
         reply_markup=lead_keyboard(lead_id, lead.get("username"), lead.get("user_id")),
+        disable_notification=not urgent,
     )
 
 
 async def broadcast_digest(text: str):
     await _broadcast(text=text)
 
+
+# ─── команды ──────────────────────────────────────────────────────────
 
 async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -113,12 +130,30 @@ async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     is_new = await add_subscriber(chat.id, user.username, user.first_name)
     if is_new:
         await update.message.reply_text(
-            "✅ Подписан на уведомления о лидах.\n"
-            "Каждый раз когда в одном из мониторимых чатов появится потенциальный клиент — "
-            "тебе придёт уведомление с готовым черновиком ответа."
+            "✅ Подписан на уведомления о лидах.\n\n"
+            "Команды:\n"
+            "/leads — последние 10 лидов\n"
+            "/leads hot — только горячие\n"
+            "/stats — статистика за сегодня/неделю/месяц\n"
+            "/chats — список мониторимых чатов\n"
+            "/add username — добавить чат\n"
+            "/remove username — убрать чат\n"
+            "/stop — отписаться"
         )
     else:
-        await update.message.reply_text("✅ Ты уже подписан, новые лиды будут приходить сюда.")
+        await update.message.reply_text("Ты уже подписан. /help — список команд.")
+
+
+async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Команды:\n"
+        "/leads [hot|warm|cold] — последние 10 лидов (или с фильтром)\n"
+        "/stats — статистика за 24ч / 7д / 30д\n"
+        "/chats — список мониторимых чатов\n"
+        "/add username — добавить чат\n"
+        "/remove username — убрать чат\n"
+        "/stop — отписаться от уведомлений"
+    )
 
 
 async def _on_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -126,8 +161,102 @@ async def _on_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not chat:
         return
     await remove_subscriber(chat.id)
-    await update.message.reply_text("🔕 Отписан от уведомлений. Чтобы вернуться — /start.")
+    await update.message.reply_text("🔕 Отписан. Чтобы вернуться — /start.")
 
+
+async def _on_leads(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    arg = (ctx.args[0].lower() if ctx.args else None)
+    leads = await leads_since(hours=24 * 30)  # последний месяц
+    if arg in {"hot", "warm", "cold"}:
+        leads = [l for l in leads if (l.get("temperature") or "warm") == arg]
+    leads = leads[:10]
+    if not leads:
+        await update.message.reply_text("Лидов пока нет.")
+        return
+    lines = [f"<b>📋 Последние {len(leads)} лидов:</b>\n"]
+    for l in leads:
+        u = f"@{l['username']}" if l.get("username") else (l.get("name") or "—")
+        temp = _TEMP_SHORT.get(l.get("temperature") or "warm", "☕")
+        status = _STATUS_LABEL.get(l["status"], "")
+        product = _PRODUCT_BADGE.get(l.get("product_type") or "custom", "🛠")
+        snippet = (l.get("message") or "").replace("\n", " ")[:60]
+        date = (l.get("created_at") or "")[:10]
+        lines.append(f"{temp} {l.get('score', 5)}/10 {product} {status} {u}\n  «{snippet}»  ({date})")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def _on_stats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    s24 = await lead_stats(24)
+    s7d = await lead_stats(24 * 7)
+    s30d = await lead_stats(24 * 30)
+
+    def _block(title, s):
+        return (
+            f"<b>{title}</b>: {s['total']} лидов\n"
+            f"  🔥 {s['hot']}  ☕ {s['warm']}  🧊 {s['cold']}\n"
+            f"  🏪 Liva: {s['liva']}   🛠 Кастом: {s['custom']}   🎯 Оба: {s['both']}\n"
+            f"  ✅ связался: {s['contacted']}   🎉 закрыто: {s['closed']}"
+        )
+
+    text = "\n\n".join([
+        "📊 <b>Статистика</b>",
+        _block("За 24 часа", s24),
+        _block("За 7 дней", s7d),
+        _block("За 30 дней", s30d),
+    ])
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+
+
+async def _on_chats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    static = sorted(TARGET_GROUPS)
+    dynamic = sorted(await list_dynamic_chats())
+    lines = ["<b>📡 Мониторимые чаты:</b>", ""]
+    if static:
+        lines.append("<b>Статичные (из config):</b>")
+        for s in static:
+            lines.append(f"• {s}")
+    if dynamic:
+        lines.append("")
+        lines.append("<b>Динамичные (добавлены через бот):</b>")
+        for d in dynamic:
+            lines.append(f"• {d}")
+    lines.append("")
+    lines.append(f"Всего: {len(static) + len(dynamic)} чатов")
+    await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
+
+
+async def _on_add(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Использование: /add username  (без @)")
+        return
+    uname = ctx.args[0].lstrip("@").lower()
+    user_id = update.effective_user.id if update.effective_user else 0
+    ok = await add_dynamic_chat(uname, user_id)
+    if ok:
+        await update.message.reply_text(
+            f"✅ Чат @{uname} добавлен. Userbot увидит его после следующего сообщения "
+            f"(а ты сам должен в нём состоять)."
+        )
+    else:
+        await update.message.reply_text(f"⚠️ Чат @{uname} уже в списке.")
+
+
+async def _on_remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not ctx.args:
+        await update.message.reply_text("Использование: /remove username")
+        return
+    uname = ctx.args[0].lstrip("@").lower()
+    ok = await remove_dynamic_chat(uname)
+    if ok:
+        await update.message.reply_text(f"✅ Чат @{uname} удалён из мониторинга.")
+    else:
+        await update.message.reply_text(
+            f"⚠️ Чат @{uname} не найден среди динамичных. "
+            f"(Статичные из config — там не удалить.)"
+        )
+
+
+# ─── callbacks от кнопок в уведомлениях ────────────────────────────────
 
 async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -203,7 +332,13 @@ async def init_bot() -> Application:
                 .build()
             )
             app.add_handler(CommandHandler("start", _on_start))
+            app.add_handler(CommandHandler("help", _on_help))
             app.add_handler(CommandHandler("stop", _on_stop))
+            app.add_handler(CommandHandler("leads", _on_leads))
+            app.add_handler(CommandHandler("stats", _on_stats))
+            app.add_handler(CommandHandler("chats", _on_chats))
+            app.add_handler(CommandHandler("add", _on_add))
+            app.add_handler(CommandHandler("remove", _on_remove))
             app.add_handler(CallbackQueryHandler(_on_callback))
             await app.initialize()
             await app.start()

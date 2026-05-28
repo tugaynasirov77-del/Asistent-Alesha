@@ -8,7 +8,10 @@ from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TARGET_GROUPS, SESSION_NAME,
 )
 from claude_client import detect_lead
-from db import save_lead, mark_seen, get_lead, recent_lead_for_user, history_for_user
+from db import (
+    save_lead, mark_seen, get_lead, recent_lead_for_user,
+    history_for_user, list_dynamic_chats,
+)
 from bot_handlers import send_lead_notification
 
 log = logging.getLogger(__name__)
@@ -16,8 +19,10 @@ log = logging.getLogger(__name__)
 user_client = TelegramClient(SESSION_NAME, TELEGRAM_API_ID, TELEGRAM_API_HASH)
 
 
-def _target_set() -> set[str]:
-    return {g.lower() for g in TARGET_GROUPS}
+async def _target_set() -> set[str]:
+    static = {g.lower() for g in TARGET_GROUPS}
+    dynamic = set(await list_dynamic_chats())
+    return static | dynamic
 
 
 async def _fetch_context(chat, target_msg_id: int, limit: int = 5) -> list[dict]:
@@ -47,7 +52,7 @@ async def on_message(event: events.NewMessage.Event):
 
     chat = await event.get_chat()
     chat_uname = (getattr(chat, "username", None) or "").lower()
-    targets = _target_set()
+    targets = await _target_set()
     if targets and chat_uname not in targets:
         return
 
@@ -89,6 +94,7 @@ async def on_message(event: events.NewMessage.Event):
         draft_reply=result.get("draft_reply", ""),
         score=int(result.get("score", 5)),
         temperature=result.get("temperature", "warm"),
+        product_type=result.get("product_type", "custom"),
     )
     lead = await get_lead(lead_id)
     # подкладываем историю по этому user_id (для блока "уже был раньше")

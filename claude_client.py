@@ -61,17 +61,29 @@ def _extract_json(text: str) -> dict | None:
         return None
 
 
-async def detect_lead(message_text: str, author: str, chat_title: str) -> dict:
+async def detect_lead(message_text: str, author: str, chat_title: str,
+                      context: list[dict] | None = None) -> dict:
+    context_block = ""
+    if context:
+        lines = [
+            f"[{m.get('author', '?')}]: {m.get('text', '')}" for m in context
+        ]
+        context_block = (
+            "\n\nКонтекст чата (последние сообщения ДО целевого, для понимания темы):\n"
+            + "\n".join(lines)
+            + "\n--- конец контекста ---\n"
+        )
+    user_content = (
+        f"Чат: {chat_title}\nАвтор: {author}{context_block}\n\n"
+        f"ЦЕЛЕВОЕ СООБЩЕНИЕ (его и оцениваем):\n{message_text}"
+    )
     try:
         resp = await client.chat.completions.create(
             model=MODEL,
             max_tokens=600,
             messages=[
                 {"role": "system", "content": LEAD_DETECTOR_PROMPT},
-                {
-                    "role": "user",
-                    "content": f"Чат: {chat_title}\nАвтор: {author}\n\nСообщение:\n{message_text}",
-                },
+                {"role": "user", "content": user_content},
             ],
         )
         text = resp.choices[0].message.content or ""

@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS leads (
     message_id INTEGER,
     reason TEXT,
     draft_reply TEXT,
-    status TEXT DEFAULT 'new',  -- new / contacted / closed / not_lead
+    score INTEGER DEFAULT 5,         -- 1..10 "горячесть"
+    temperature TEXT DEFAULT 'warm', -- hot / warm / cold
+    status TEXT DEFAULT 'new',
     created_at TEXT
 );
 
@@ -34,15 +36,17 @@ async def init_db():
 
 
 async def save_lead(user_id, username, name, chat_title, chat_id, message,
-                    message_id, reason, draft_reply) -> int:
+                    message_id, reason, draft_reply,
+                    score: int = 5, temperature: str = "warm") -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO leads
                (user_id, username, name, chat_title, chat_id, message, message_id,
-                reason, draft_reply, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                reason, draft_reply, score, temperature, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, username, name, chat_title, chat_id, message, message_id,
-             reason, draft_reply, datetime.utcnow().isoformat()),
+             reason, draft_reply, score, temperature,
+             datetime.utcnow().isoformat()),
         )
         await db.commit()
         return cur.lastrowid

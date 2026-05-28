@@ -17,13 +17,19 @@ log = logging.getLogger(__name__)
 _application: Application | None = None
 
 
+_TEMP_BADGE = {"hot": "🔥 HOT", "warm": "☕ WARM", "cold": "🧊 COLD"}
+
+
 def render_lead_text(lead: dict) -> str:
     username = lead.get("username")
     name = lead.get("name") or "—"
     chat_title = lead.get("chat_title") or "—"
     uname_str = f"@{username}" if username else "без username"
+    temp = (lead.get("temperature") or "warm").lower()
+    score = lead.get("score") or 5
+    badge = _TEMP_BADGE.get(temp, "☕ WARM")
     return (
-        "🎯 <b>Новый лид</b>\n\n"
+        f"🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>\n\n"
         f"<b>Кто:</b> {name} ({uname_str})\n"
         f"<b>Чат:</b> {chat_title}\n\n"
         f"<b>Сообщение:</b>\n{lead['message']}\n\n"

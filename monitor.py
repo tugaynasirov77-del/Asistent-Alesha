@@ -78,6 +78,8 @@ async def on_message(event: events.NewMessage.Event):
         message_id=event.id,
         reason=result.get("reason", ""),
         draft_reply=result.get("draft_reply", ""),
+        score=int(result.get("score", 5)),
+        temperature=result.get("temperature", "warm"),
     )
     lead = await get_lead(lead_id)
     await send_lead_notification(lead_id, lead)

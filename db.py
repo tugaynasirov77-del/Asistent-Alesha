@@ -78,6 +78,21 @@ async def update_lead_status(lead_id: int, status: str):
         await db.commit()
 
 
+async def recent_lead_for_user(user_id: int, days: int = 7) -> dict | None:
+    """Возвращает последнего лида от user_id за последние N дней, иначе None."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT * FROM leads
+               WHERE user_id = ?
+                 AND datetime(created_at) >= datetime('now', ?)
+               ORDER BY id DESC LIMIT 1""",
+            (user_id, f'-{days} days'),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def mark_seen(chat_id: int, message_id: int) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         try:

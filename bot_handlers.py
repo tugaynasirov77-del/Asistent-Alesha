@@ -129,22 +129,32 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def init_bot() -> Application:
+    """С retry — сеть до api.telegram.org с RU-сервера часто лагает на старте."""
+    import asyncio as _asyncio
     global _application
-    req = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
-    app = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .request(req)
-        .get_updates_request(HTTPXRequest(connect_timeout=30, read_timeout=60))
-        .build()
-    )
-    app.add_handler(CallbackQueryHandler(_on_callback))
-    _application = app
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-    log.info("Notifier bot started (with inline buttons)")
-    return app
+    last_err = None
+    for attempt in range(1, 6):
+        try:
+            req = HTTPXRequest(connect_timeout=60, read_timeout=60, write_timeout=60, pool_timeout=60)
+            app = (
+                Application.builder()
+                .token(BOT_TOKEN)
+                .request(req)
+                .get_updates_request(HTTPXRequest(connect_timeout=60, read_timeout=120))
+                .build()
+            )
+            app.add_handler(CallbackQueryHandler(_on_callback))
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+            _application = app
+            log.info("Notifier bot started (attempt %s)", attempt)
+            return app
+        except Exception as e:
+            last_err = e
+            log.warning("Bot init attempt %s failed: %s", attempt, e)
+            await _asyncio.sleep(5 * attempt)
+    raise RuntimeError(f"Bot init failed after 5 attempts: {last_err}")
 
 
 async def shutdown_bot(app: Application):

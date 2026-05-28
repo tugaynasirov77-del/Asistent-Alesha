@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS seen_messages (
     message_id INTEGER,
     PRIMARY KEY (chat_id, message_id)
 );
+
+CREATE TABLE IF NOT EXISTS subscribers (
+    chat_id INTEGER PRIMARY KEY,
+    username TEXT,
+    first_name TEXT,
+    added_at TEXT
+);
 """
 
 
@@ -75,6 +82,33 @@ async def update_lead_status(lead_id: int, status: str):
             "UPDATE leads SET status = ? WHERE id = ?",
             (status, lead_id),
         )
+        await db.commit()
+
+
+async def add_subscriber(chat_id: int, username: str | None, first_name: str | None) -> bool:
+    """True если впервые подписан, False если уже был."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute(
+                "INSERT INTO subscribers (chat_id, username, first_name, added_at) VALUES (?, ?, ?, ?)",
+                (chat_id, username, first_name, datetime.utcnow().isoformat()),
+            )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def all_subscribers() -> list[int]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT chat_id FROM subscribers") as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def remove_subscriber(chat_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM subscribers WHERE chat_id = ?", (chat_id,))
         await db.commit()
 
 

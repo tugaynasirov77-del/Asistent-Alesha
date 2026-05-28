@@ -1,15 +1,18 @@
-"""Бот-уведомитель: рендерит лид с кнопками и обрабатывает их клики."""
+"""Бот-уведомитель: рассылает лиды всем подписчикам, обрабатывает кнопки."""
 import logging
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
-    Application, CallbackQueryHandler, ContextTypes,
+    Application, CallbackQueryHandler, CommandHandler, ContextTypes,
 )
 from telegram.request import HTTPXRequest
 
 from config import BOT_TOKEN, MY_TELEGRAM_ID
-from db import get_lead, update_lead_draft, update_lead_status
+from db import (
+    get_lead, update_lead_draft, update_lead_status,
+    add_subscriber, all_subscribers, remove_subscriber,
+)
 from claude_client import regenerate_draft
 
 log = logging.getLogger(__name__)
@@ -17,9 +20,13 @@ log = logging.getLogger(__name__)
 _application: Application | None = None
 
 
-_TEMP_BADGE = {"hot": "🔥 HOT", "warm": "☕ WARM", "cold": "🧊 COLD"}
-_STATUS_LABEL = {"new": "🆕 не отвечал", "contacted": "✅ связался",
-                 "closed": "🎉 закрыт", "not_lead": "❌ не лид"}
+_TEMP_BADGE = {"hot": "🔥 ГОРЯЧИЙ", "warm": "☕ ТЁПЛЫЙ", "cold": "🧊 ХОЛОДНЫЙ"}
+_STATUS_LABEL = {
+    "new": "🆕 не отвечал",
+    "contacted": "✅ связался",
+    "closed": "🎉 закрыт",
+    "not_lead": "❌ не лид",
+}
 
 
 def _format_history(history: list[dict]) -> str:
@@ -42,7 +49,7 @@ def render_lead_text(lead: dict) -> str:
     uname_str = f"@{username}" if username else "без username"
     temp = (lead.get("temperature") or "warm").lower()
     score = lead.get("score") or 5
-    badge = _TEMP_BADGE.get(temp, "☕ WARM")
+    badge = _TEMP_BADGE.get(temp, "☕ ТЁПЛЫЙ")
     history_block = _format_history(lead.get("_history") or [])
     return (
         f"🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>\n\n"
@@ -62,9 +69,7 @@ def lead_keyboard(lead_id: int, username: str | None, user_id: int) -> InlineKey
             InlineKeyboardButton("📋 Скопировать", callback_data=f"copy:{lead_id}"),
             InlineKeyboardButton("🔄 Другой", callback_data=f"regen:{lead_id}"),
         ],
-        [
-            InlineKeyboardButton("👤 Открыть профиль", url=profile_url),
-        ],
+        [InlineKeyboardButton("👤 Открыть профиль", url=profile_url)],
         [
             InlineKeyboardButton("✅ Связался", callback_data=f"done:{lead_id}"),
             InlineKeyboardButton("❌ Не лид", callback_data=f"skip:{lead_id}"),
@@ -72,17 +77,56 @@ def lead_keyboard(lead_id: int, username: str | None, user_id: int) -> InlineKey
     ])
 
 
-async def send_lead_notification(lead_id: int, lead: dict):
-    """Шлёт уведомление о новом лиде владельцу."""
+async def _broadcast(text: str, parse_mode=ParseMode.HTML, reply_markup=None):
+    """Шлёт сообщение всем подписчикам + владельцу."""
     if _application is None:
         log.error("Bot application not initialized")
         return
-    await _application.bot.send_message(
-        chat_id=MY_TELEGRAM_ID,
+    ids = set(await all_subscribers())
+    ids.add(MY_TELEGRAM_ID)  # владелец всегда получает
+    for chat_id in ids:
+        try:
+            await _application.bot.send_message(
+                chat_id=chat_id, text=text,
+                parse_mode=parse_mode, reply_markup=reply_markup,
+            )
+        except Exception as e:
+            log.warning("Broadcast failed for %s: %s", chat_id, e)
+
+
+async def send_lead_notification(lead_id: int, lead: dict):
+    await _broadcast(
         text=render_lead_text(lead),
-        parse_mode=ParseMode.HTML,
         reply_markup=lead_keyboard(lead_id, lead.get("username"), lead.get("user_id")),
     )
+
+
+async def broadcast_digest(text: str):
+    await _broadcast(text=text)
+
+
+async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat:
+        return
+    is_new = await add_subscriber(chat.id, user.username, user.first_name)
+    if is_new:
+        await update.message.reply_text(
+            "✅ Подписан на уведомления о лидах.\n"
+            "Каждый раз когда в одном из мониторимых чатов появится потенциальный клиент — "
+            "тебе придёт уведомление с готовым черновиком ответа."
+        )
+    else:
+        await update.message.reply_text("✅ Ты уже подписан, новые лиды будут приходить сюда.")
+
+
+async def _on_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if not chat:
+        return
+    await remove_subscriber(chat.id)
+    await update.message.reply_text("🔕 Отписан от уведомлений. Чтобы вернуться — /start.")
 
 
 async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -102,7 +146,6 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
     if action == "copy":
-        # Шлём черновик отдельным сообщением — long-press копирует одним тапом
         await ctx.bot.send_message(
             chat_id=query.message.chat_id,
             text=f"`{lead['draft_reply']}`",
@@ -146,7 +189,6 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def init_bot() -> Application:
-    """С retry — сеть до api.telegram.org с RU-сервера часто лагает на старте."""
     import asyncio as _asyncio
     global _application
     last_err = None
@@ -160,6 +202,8 @@ async def init_bot() -> Application:
                 .get_updates_request(HTTPXRequest(connect_timeout=60, read_timeout=120))
                 .build()
             )
+            app.add_handler(CommandHandler("start", _on_start))
+            app.add_handler(CommandHandler("stop", _on_stop))
             app.add_handler(CallbackQueryHandler(_on_callback))
             await app.initialize()
             await app.start()

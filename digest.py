@@ -4,10 +4,8 @@ import asyncio
 import logging
 from datetime import datetime, time, timedelta
 
-from telegram.constants import ParseMode
-
-from config import MY_TELEGRAM_ID
 from db import leads_since
+from bot_handlers import broadcast_digest
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +13,8 @@ SEND_AT = time(hour=9, minute=0)  # локальное время сервера
 
 
 _STATUS_LABEL = {"new": "🆕", "contacted": "✅", "closed": "🎉", "not_lead": "❌"}
-_TEMP_BADGE = {"hot": "🔥", "warm": "☕", "cold": "🧊"}
+_TEMP_BADGE = {"hot": "🔥 ГОРЯЧИЙ", "warm": "☕ ТЁПЛЫЙ", "cold": "🧊 ХОЛОДНЫЙ"}
+_TEMP_SHORT = {"hot": "🔥", "warm": "☕", "cold": "🧊"}
 
 
 def _format_digest(leads: list[dict]) -> str:
@@ -32,7 +31,7 @@ def _format_digest(leads: list[dict]) -> str:
         f"☀️ <b>Дайджест за 24ч</b>",
         "",
         f"Всего лидов: <b>{len(leads)}</b>",
-        f"🔥 hot: {len(hot)}   ☕ warm: {len(warm)}   🧊 cold: {len(cold)}",
+        f"🔥 горячих: {len(hot)}   ☕ тёплых: {len(warm)}   🧊 холодных: {len(cold)}",
         f"🆕 новых: {new}   ✅ обработано: {contacted}",
         "",
         "<b>Топ по горячести:</b>",
@@ -40,7 +39,7 @@ def _format_digest(leads: list[dict]) -> str:
     for l in leads[:10]:
         uname = l.get("username")
         u = f"@{uname}" if uname else (l.get("name") or "—")
-        badge = _TEMP_BADGE.get(l.get("temperature") or "warm", "☕")
+        badge = _TEMP_SHORT.get(l.get("temperature") or "warm", "☕")
         status = _STATUS_LABEL.get(l["status"], "")
         snippet = (l.get("message") or "").replace("\n", " ")[:80]
         lines.append(f"{badge} {l.get('score', 5)}/10 {status} {u} — «{snippet}»")
@@ -57,7 +56,7 @@ def _seconds_until_next(target: time) -> float:
     return (target_dt - now).total_seconds()
 
 
-async def digest_loop(bot):
+async def digest_loop():
     while True:
         delay = _seconds_until_next(SEND_AT)
         log.info("Digest will fire in %.0f seconds", delay)
@@ -65,11 +64,8 @@ async def digest_loop(bot):
         try:
             leads = await leads_since(hours=24)
             text = _format_digest(leads)
-            await bot.send_message(
-                chat_id=MY_TELEGRAM_ID, text=text, parse_mode=ParseMode.HTML
-            )
+            await broadcast_digest(text)
             log.info("Digest sent (%s leads)", len(leads))
         except Exception as e:
             log.exception("Digest failed: %s", e)
-        # Подстраховка: чтобы не отправить дважды если ушло за миллисекунды
         await asyncio.sleep(60)

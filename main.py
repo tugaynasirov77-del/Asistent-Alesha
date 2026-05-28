@@ -16,7 +16,7 @@ logging.basicConfig(
 async def main():
     await init_db()
     bot_app = await init_bot()
-    digest_task = asyncio.create_task(digest_loop(bot_app.bot))
+    digest_task = asyncio.create_task(digest_loop())
     try:
         await run_monitor()
     finally:

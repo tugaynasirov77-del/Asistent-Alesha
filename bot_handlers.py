@@ -6,6 +6,7 @@ from telegram.constants import ParseMode
 from telegram.ext import (
     Application, CallbackQueryHandler, ContextTypes,
 )
+from telegram.request import HTTPXRequest
 
 from config import BOT_TOKEN, MY_TELEGRAM_ID
 from db import get_lead, update_lead_draft, update_lead_status
@@ -123,7 +124,14 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def init_bot() -> Application:
     global _application
-    app = Application.builder().token(BOT_TOKEN).build()
+    req = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30, pool_timeout=30)
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .request(req)
+        .get_updates_request(HTTPXRequest(connect_timeout=30, read_timeout=60))
+        .build()
+    )
     app.add_handler(CallbackQueryHandler(_on_callback))
     _application = app
     await app.initialize()

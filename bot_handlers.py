@@ -179,6 +179,58 @@ async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Userbot вступает во все dynamic_chats где ещё не состоит.
+    С задержкой 40-90 секунд между чатами, чтобы Telegram не заподозрил массовый join."""
+    import asyncio as _asyncio
+    import random as _random
+    from monitor import user_client
+    from telethon.errors import (
+        ChannelsTooMuchError, UserAlreadyParticipantError, ChannelPrivateError,
+        InviteRequestSentError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError,
+    )
+    chats = await list_dynamic_chats()
+    if not chats:
+        await update.message.reply_text("Список dynamic_chats пуст.")
+        return
+    await update.message.reply_text(
+        f"Начинаю вступать в {len(chats)} чатов с паузой 40-90с между ними.\n"
+        f"Буду писать отчёт по мере прогресса. Не отключай Алёшу."
+    )
+    joined, already, skipped, errors = 0, 0, 0, 0
+    for i, uname in enumerate(chats, 1):
+        try:
+            entity = await user_client.get_entity(uname)
+            await user_client(__import__(
+                "telethon.tl.functions.channels", fromlist=["JoinChannelRequest"]
+            ).JoinChannelRequest(entity))
+            joined += 1
+            status = "✅ вступил"
+        except UserAlreadyParticipantError:
+            already += 1
+            status = "ℹ️ уже состоит"
+        except (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError) as e:
+            skipped += 1
+            status = f"⏭ пропущен ({type(e).__name__})"
+        except FloodWaitError as e:
+            await update.message.reply_text(
+                f"⚠️ FloodWait {e.seconds}с. Останавливаюсь на чате {uname}. "
+                f"Попробуй /joinall позже."
+            )
+            return
+        except Exception as e:
+            errors += 1
+            status = f"❌ ошибка: {e}"
+        await update.message.reply_text(f"[{i}/{len(chats)}] @{uname}: {status}")
+        if i < len(chats):
+            delay = _random.uniform(40, 90)
+            await _asyncio.sleep(delay)
+    await update.message.reply_text(
+        f"🏁 Готово.\nВступил: {joined}\nУже состоял: {already}\n"
+        f"Пропущен: {skipped}\nОшибки: {errors}"
+    )
+
+
 async def _on_setprofile(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Один раз обновить имя/био userbot аккаунта на промо-вариант."""
     try:
@@ -451,6 +503,7 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("remove", _on_remove))
             app.add_handler(CommandHandler("autoreply", _on_autoreply))
             app.add_handler(CommandHandler("setprofile", _on_setprofile))
+            app.add_handler(CommandHandler("joinall", _on_joinall))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(CallbackQueryHandler(_on_callback))

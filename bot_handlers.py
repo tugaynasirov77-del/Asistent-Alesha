@@ -1,5 +1,6 @@
 """Бот-уведомитель: лиды, команды управления, рассылка подписчикам."""
 import logging
+import os
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
@@ -429,13 +430,17 @@ async def init_bot_forever() -> Application:
         attempt += 1
         try:
             req = HTTPXRequest(connect_timeout=60, read_timeout=60, write_timeout=60, pool_timeout=60)
-            app = (
+            builder = (
                 Application.builder()
                 .token(BOT_TOKEN)
                 .request(req)
                 .get_updates_request(HTTPXRequest(connect_timeout=60, read_timeout=120))
-                .build()
             )
+            tg_proxy = os.getenv("TG_PROXY_BASE", "").rstrip("/")
+            if tg_proxy:
+                builder = builder.base_url(f"{tg_proxy}/bot").base_file_url(f"{tg_proxy}/file/bot")
+                log.info("Bot API через прокси: %s", tg_proxy)
+            app = builder.build()
             app.add_handler(CommandHandler("start", _on_start))
             app.add_handler(CommandHandler("help", _on_help))
             app.add_handler(CommandHandler("stop", _on_stop))

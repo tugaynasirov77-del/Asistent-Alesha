@@ -57,12 +57,21 @@ def render_lead_text(lead: dict) -> str:
     temp = (lead.get("temperature") or "warm").lower()
     score = lead.get("score") or 5
     product = (lead.get("product_type") or "custom").lower()
+    intent = (lead.get("intent") or "client").lower()
     badge = _TEMP_BADGE.get(temp, "☕ ТЁПЛЫЙ")
     product_badge = _PRODUCT_BADGE.get(product, "🛠 КАСТОМ")
     urgent = "🚨🚨🚨 СРОЧНО! 🚨🚨🚨\n\n" if score >= 10 else ""
     history_block = _format_history(lead.get("_history") or [])
+
+    if intent == "channel_invite":
+        title = "📣 <b>Кандидат в канал</b>"
+        meta = f"{badge} <b>{score}/10</b>"
+    else:
+        title = "🎯 <b>Новый лид</b>"
+        meta = f"{badge} <b>{score}/10</b>  {product_badge}"
+
     return (
-        f"{urgent}🎯 <b>Новый лид</b>  {badge} <b>{score}/10</b>  {product_badge}\n\n"
+        f"{urgent}{title}  {meta}\n\n"
         f"<b>Кто:</b> {name} ({uname_str})\n"
         f"<b>Чат:</b> {chat_title}\n\n"
         f"<b>Сообщение:</b>\n{lead['message']}\n\n"

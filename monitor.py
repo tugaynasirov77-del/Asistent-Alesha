@@ -98,6 +98,7 @@ async def on_message(event: events.NewMessage.Event):
         score=int(result.get("score", 5)),
         temperature=result.get("temperature", "warm"),
         product_type=result.get("product_type", "custom"),
+        intent=result.get("intent", "client"),
     )
     lead = await get_lead(lead_id)
     history = await history_for_user(sender.id, limit=5)

@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS leads (
     draft_reply TEXT,
     score INTEGER DEFAULT 5,
     temperature TEXT DEFAULT 'warm',
-    product_type TEXT DEFAULT 'custom', -- liva / custom / both
+    product_type TEXT DEFAULT 'custom',
+    intent TEXT DEFAULT 'client',   -- client / channel_invite
     status TEXT DEFAULT 'new',
     created_at TEXT
 );
@@ -84,15 +85,16 @@ async def init_db():
 async def save_lead(user_id, username, name, chat_title, chat_id, message,
                     message_id, reason, draft_reply,
                     score: int = 5, temperature: str = "warm",
-                    product_type: str = "custom") -> int:
+                    product_type: str = "custom",
+                    intent: str = "client") -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute(
             """INSERT INTO leads
                (user_id, username, name, chat_title, chat_id, message, message_id,
-                reason, draft_reply, score, temperature, product_type, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                reason, draft_reply, score, temperature, product_type, intent, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user_id, username, name, chat_title, chat_id, message, message_id,
-             reason, draft_reply, score, temperature, product_type,
+             reason, draft_reply, score, temperature, product_type, intent,
              datetime.utcnow().isoformat()),
         )
         await db.commit()

@@ -30,6 +30,10 @@ TARGET_GROUPS = [
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
+# === Канал для прогрева трафика ===
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "daniil_prim")  # без @
+CHANNEL_URL = f"https://t.me/{CHANNEL_USERNAME}"
+
 DB_PATH = os.getenv("DB_PATH", "alesha.db")
 SESSION_NAME = os.getenv("SESSION_NAME", "userbot")
 

@@ -16,9 +16,16 @@ MODEL = os.getenv("CLAUDE_MODEL", "anthropic/claude-sonnet-4.5")
 client = AsyncOpenAI(api_key=API_KEY, base_url=BASE_URL)
 
 
-LEAD_DETECTOR_PROMPT = """Ты — детектор лидов для предпринимателя Тугая (@prim_daniil).
+import os as _os
+CHANNEL_URL = f"https://t.me/{_os.getenv('CHANNEL_USERNAME', 'daniil_prim')}"
 
-У него ДВА продукта:
+
+LEAD_DETECTOR_PROMPT = f"""Ты — детектор лидов для предпринимателя Тугая (@prim_daniil).
+
+У Тугая есть Telegram-канал: {CHANNEL_URL} — там кейсы и разборы по AI-автоматизации.
+Канал — главный актив для прогрева трафика. Везде где можешь — упоминай его естественно.
+
+У Тугая ДВА продукта:
 
 ПРОДУКТ A — «Liva ai» (SaaS, ailiva.ru): AI-администратор за 2 500₽/мес.
 Заменяет живого администратора в малом бизнесе (салоны красоты,
@@ -55,22 +62,32 @@ LEAD_DETECTOR_PROMPT = """Ты — детектор лидов для предп
 Если матч — определи product_type ("liva" / "custom" / "both"):
 - "liva" — явно мелкий бизнес из списка ниш, нужно дешёвое массовое решение
 - "custom" — средний+ бизнес, нужна индивидуальная разработка
-- "both" — может зайти и то и то (например, "хочу AI для салона, но сложная интеграция")
+- "both" — может зайти и то и то
 
 Оцени горячесть:
 - score 10 + temperature "hot": ИЩЕТ ПРЯМО СЕЙЧАС, готов платить, конкретное ТЗ
 - score 7-9 + "hot": явно ищет подрядчика, изучает варианты
-- score 4-6 + "warm": есть проблема, но просто узнаёт
+- score 4-6 + "warm": есть проблема, но просто узнаёт / сомневается
 - score 1-3 + "cold": рассуждает / спрашивает мнение
 
+Тип ответа intent:
+- "client" (score 7-10): отвечаем как потенциальному клиенту — зовём на сайт/в личку,
+  В КОНЦЕ draft_reply добавляй ТОНКО упоминание канала {CHANNEL_URL} ("у меня в канале
+  как раз был похожий разбор" / "подробнее в канале" — естественно, не рекламно)
+- "channel_invite" (score 4-6): не дозрел до клиента, но тема интересна → лёгкое
+  приглашение в канал {CHANNEL_URL}. draft должен быть полностью про канал:
+  «Видел твой вопрос про X — у меня в канале как раз разбирал {{кейс/тему}},
+  возможно, будет полезно: {CHANNEL_URL}». Никакого "купите".
+- "skip" (score 1-3): match = false, ничего не делаем
+
 draft_reply правила:
-- Для product_type "liva": упомяни ailiva.ru и 1000 сообщений бесплатно, без давления
-- Для product_type "custom": зови в личку обсудить детально
-- Для "both": кратко покажи оба варианта, дай выбор
+- Для product_type "liva" + intent "client": упомяни ailiva.ru и 1000 сообщений бесплатно
+- Для product_type "custom" + intent "client": зови в личку обсудить
+- Для intent "channel_invite": ТОЛЬКО приглашение в канал, ничего больше
 
 Верни СТРОГО JSON, без markdown:
-{"match": true, "product_type": "liva"|"custom"|"both", "score": <1-10>, "temperature": "hot"|"warm"|"cold", "reason": "<1-2 предложения>", "draft_reply": "<2-4 предложения, от первого лица, без продажности>"}
-или {"match": false}
+{{"match": true, "intent": "client"|"channel_invite", "product_type": "liva"|"custom"|"both", "score": <1-10>, "temperature": "hot"|"warm"|"cold", "reason": "<1-2 предложения>", "draft_reply": "<2-4 предложения, от первого лица, без давления>"}}
+или {{"match": false}}
 """
 
 

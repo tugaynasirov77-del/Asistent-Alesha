@@ -16,7 +16,7 @@ from telethon.errors import RPCError
 from telethon.tl.functions.account import UpdateProfileRequest
 from telethon.tl.types import ReactionEmoji
 
-from claude_client import client as openai_client, MODEL
+from claude_client import client as ai_client, MODEL
 
 log = logging.getLogger(__name__)
 
@@ -116,14 +116,13 @@ async def _generate_comment(post_text: str, mention_chance: float = 0.2) -> str 
     else:
         prompt += "\n\nВ ЭТОТ раз — БЕЗ упоминания канала."
     try:
-        resp = await openai_client.chat.completions.create(
+        resp = await ai_client.messages.create(
             model=MODEL, max_tokens=300,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": f"Пост:\n{post_text[:1500]}"},
-            ],
+            system=prompt,
+            messages=[{"role": "user", "content": f"Пост:\n{post_text[:1500]}"}],
         )
-        return (resp.choices[0].message.content or "").strip()
+        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+        return text.strip()
     except Exception as e:
         log.exception("Comment gen failed: %s", e)
         return None

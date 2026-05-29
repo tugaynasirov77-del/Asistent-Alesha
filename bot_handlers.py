@@ -345,11 +345,14 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
 
 
-async def init_bot() -> Application:
+async def init_bot_forever() -> Application:
+    """Бесконечный retry — сеть до api.telegram.org с RU-сервера часто лагает.
+    Не падает: ждёт сколько надо, попутно даёт работать монитору."""
     import asyncio as _asyncio
     global _application
-    last_err = None
-    for attempt in range(1, 6):
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             req = HTTPXRequest(connect_timeout=60, read_timeout=60, write_timeout=60, pool_timeout=60)
             app = (
@@ -376,10 +379,12 @@ async def init_bot() -> Application:
             log.info("Notifier bot started (attempt %s)", attempt)
             return app
         except Exception as e:
-            last_err = e
-            log.warning("Bot init attempt %s failed: %s", attempt, e)
-            await _asyncio.sleep(5 * attempt)
-    raise RuntimeError(f"Bot init failed after 5 attempts: {last_err}")
+            log.warning("Bot init attempt %s failed: %s — retry in 60s", attempt, e)
+            await _asyncio.sleep(60)
+
+
+# обратная совместимость
+init_bot = init_bot_forever
 
 
 async def shutdown_bot(app: Application):

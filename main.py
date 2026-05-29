@@ -13,15 +13,31 @@ logging.basicConfig(
 )
 
 
+async def _bot_lifecycle():
+    """Поднимает бота с бесконечным retry. Если бот всё же упал — пробует заново."""
+    while True:
+        try:
+            await init_bot()
+            # держим живым: ждём пока updater не остановится
+            while True:
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logging.exception("Bot lifecycle crashed: %s — restart in 30s", e)
+            await asyncio.sleep(30)
+
+
 async def main():
     await init_db()
-    bot_app = await init_bot()
+    # Бот и дайджест — параллельно, монитор — основной таск
+    bot_task = asyncio.create_task(_bot_lifecycle())
     digest_task = asyncio.create_task(digest_loop())
     try:
         await run_monitor()
     finally:
+        bot_task.cancel()
         digest_task.cancel()
-        await shutdown_bot(bot_app)
 
 
 if __name__ == "__main__":

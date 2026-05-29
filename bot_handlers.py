@@ -169,11 +169,76 @@ async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"/add username — добавить чат\n"
         f"/remove username — убрать чат\n"
         f"/autoreply on|off — авто-ответы в чаты (сейчас: {auto})\n"
-        f"  Параметры: score≥{_cfg.AUTO_REPLY_MIN_SCORE}, "
-        f"лимит {_cfg.AUTO_REPLY_PER_CHAT_DAY}/чат/сутки, "
-        f"задержка {_cfg.AUTO_REPLY_DELAY_MIN}-{_cfg.AUTO_REPLY_DELAY_MAX}с\n"
-        f"/stop — отписаться"
+        f"\nПромо канала @daniil_prim:\n"
+        f"/setprofile — обновить имя/био твоего @prim_daniil (реклама канала)\n"
+        f"/react on|off — авто-реакции на свои посты (для виральности)\n"
+        f"/comp add username — добавить чужой канал для smart-комментариев\n"
+        f"/comp on|off — включить/выключить написание комментариев\n"
+        f"\n/stop — отписаться"
     )
+
+
+async def _on_setprofile(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Один раз обновить имя/био userbot аккаунта на промо-вариант."""
+    try:
+        from monitor import user_client
+        from promo import apply_profile_promo
+        result = await apply_profile_promo(user_client)
+        await update.message.reply_text(result)
+    except Exception as e:
+        await update.message.reply_text(f"Ошибка: {e}")
+
+
+async def _on_comp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Управление списком каналов конкурентов для smart-комментариев."""
+    from promo import COMPETITORS, PROMO_FLAGS
+    if not ctx.args:
+        items = sorted(COMPETITORS) or ["(пусто)"]
+        flag = "вкл ✅" if PROMO_FLAGS["comment_competitors"] else "выкл ❌"
+        await update.message.reply_text(
+            "Smart-комментарии под чужими каналами:\n"
+            f"Состояние: {flag}\n\n"
+            "Список:\n" + "\n".join(f"• {c}" for c in items) + "\n\n"
+            "/comp add username — добавить\n"
+            "/comp remove username — убрать\n"
+            "/comp on  — включить авто-комменты\n"
+            "/comp off — выключить"
+        )
+        return
+    cmd = ctx.args[0].lower()
+    if cmd == "add" and len(ctx.args) >= 2:
+        u = ctx.args[1].lstrip("@").lower()
+        COMPETITORS.add(u)
+        await update.message.reply_text(f"✅ Добавлен @{u}. Состою ли я в нём — проверь сам.")
+    elif cmd == "remove" and len(ctx.args) >= 2:
+        u = ctx.args[1].lstrip("@").lower()
+        COMPETITORS.discard(u)
+        await update.message.reply_text(f"✅ Убран @{u}.")
+    elif cmd == "on":
+        PROMO_FLAGS["comment_competitors"] = True
+        await update.message.reply_text("✅ Smart-комментарии включены.")
+    elif cmd == "off":
+        PROMO_FLAGS["comment_competitors"] = False
+        await update.message.reply_text("❌ Smart-комментарии выключены.")
+    else:
+        await update.message.reply_text("Неизвестная команда. /comp — справка.")
+
+
+async def _on_react(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    from promo import PROMO_FLAGS, CHANNEL_USERNAME
+    arg = (ctx.args[0].lower() if ctx.args else None)
+    if arg == "on":
+        PROMO_FLAGS["react_own"] = True
+        await update.message.reply_text(f"✅ Авто-реакции на посты @{CHANNEL_USERNAME} включены.")
+    elif arg == "off":
+        PROMO_FLAGS["react_own"] = False
+        await update.message.reply_text("❌ Авто-реакции выключены.")
+    else:
+        cur = "вкл ✅" if PROMO_FLAGS["react_own"] else "выкл ❌"
+        await update.message.reply_text(
+            f"Авто-реакции на @{CHANNEL_USERNAME}: {cur}\n"
+            "Использование: /react on  или  /react off"
+        )
 
 
 async def _on_autoreply(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -380,6 +445,9 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("add", _on_add))
             app.add_handler(CommandHandler("remove", _on_remove))
             app.add_handler(CommandHandler("autoreply", _on_autoreply))
+            app.add_handler(CommandHandler("setprofile", _on_setprofile))
+            app.add_handler(CommandHandler("comp", _on_comp))
+            app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(CallbackQueryHandler(_on_callback))
             await app.initialize()
             await app.start()

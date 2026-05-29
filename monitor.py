@@ -149,5 +149,13 @@ async def _maybe_auto_reply(event, lead_id: int, lead: dict):
 
 async def run_monitor():
     await user_client.start()
+    # промо-механики (реакции на свой канал, комменты под конкурентами)
+    try:
+        from promo import register_own_channel_handler, register_competitor_handlers
+        register_own_channel_handler(user_client)
+        register_competitor_handlers(user_client)
+        log.info("Promo handlers registered")
+    except Exception as e:
+        log.warning("Promo handlers not registered: %s", e)
     log.info("Monitor started. Watching groups: %s", TARGET_GROUPS or "(all)")
     await user_client.run_until_disconnected()

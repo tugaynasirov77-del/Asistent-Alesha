@@ -6,13 +6,16 @@ from telethon import TelegramClient, events
 
 from config import (
     TELEGRAM_API_ID, TELEGRAM_API_HASH, TARGET_GROUPS, SESSION_NAME,
+    AUTO_REPLY_ENABLED, AUTO_REPLY_MIN_SCORE, AUTO_REPLY_PER_CHAT_DAY,
+    AUTO_REPLY_DELAY_MIN, AUTO_REPLY_DELAY_MAX,
 )
 from claude_client import detect_lead
 from db import (
     save_lead, mark_seen, get_lead, recent_lead_for_user,
     history_for_user, list_dynamic_chats,
+    auto_replies_in_chat_24h, log_auto_reply,
 )
-from bot_handlers import send_lead_notification
+from bot_handlers import send_lead_notification, send_auto_reply_notice
 
 log = logging.getLogger(__name__)
 
@@ -97,11 +100,50 @@ async def on_message(event: events.NewMessage.Event):
         product_type=result.get("product_type", "custom"),
     )
     lead = await get_lead(lead_id)
-    # подкладываем историю по этому user_id (для блока "уже был раньше")
     history = await history_for_user(sender.id, limit=5)
     lead["_history"] = [h for h in history if h["id"] != lead_id]
     await send_lead_notification(lead_id, lead)
-    log.info("Lead saved id=%s author=%s", lead_id, author)
+    log.info("Lead saved id=%s author=%s score=%s", lead_id, author, lead.get("score"))
+
+    # Авто-ответ в чат (вариант B) — только если включено и лид горячий
+    asyncio.create_task(_maybe_auto_reply(event, lead_id, lead))
+
+
+async def _maybe_auto_reply(event, lead_id: int, lead: dict):
+    if not AUTO_REPLY_ENABLED:
+        return
+    score = lead.get("score") or 0
+    if score < AUTO_REPLY_MIN_SCORE:
+        log.info("Auto-reply skip lead=%s: score %s < %s", lead_id, score, AUTO_REPLY_MIN_SCORE)
+        return
+
+    chat_id = event.chat_id
+    count = await auto_replies_in_chat_24h(chat_id)
+    if count >= AUTO_REPLY_PER_CHAT_DAY:
+        log.info("Auto-reply skip lead=%s: chat %s reached daily limit %s",
+                 lead_id, chat_id, AUTO_REPLY_PER_CHAT_DAY)
+        await send_auto_reply_notice(lead_id, "⚠️ Лимит авто-ответов в этом чате на сутки исчерпан, не отвечаю.")
+        return
+
+    draft = lead.get("draft_reply") or ""
+    if not draft.strip():
+        return
+
+    delay = random.uniform(AUTO_REPLY_DELAY_MIN, AUTO_REPLY_DELAY_MAX)
+    log.info("Auto-reply lead=%s: sending in %.0fs", lead_id, delay)
+    await asyncio.sleep(delay)
+
+    try:
+        sent = await event.reply(draft)
+        await log_auto_reply(lead_id, chat_id, sent.id, draft)
+        await send_auto_reply_notice(
+            lead_id,
+            f"📤 <b>Авто-ответ отправлен в чат</b> (за сутки в этом чате: {count + 1}/{AUTO_REPLY_PER_CHAT_DAY})",
+        )
+        log.info("Auto-reply sent lead=%s msg_id=%s", lead_id, sent.id)
+    except Exception as e:
+        log.exception("Auto-reply failed lead=%s: %s", lead_id, e)
+        await send_auto_reply_notice(lead_id, f"⚠️ Не смог отправить авто-ответ: {e}")
 
 
 async def run_monitor():

@@ -32,3 +32,11 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 DB_PATH = os.getenv("DB_PATH", "alesha.db")
 SESSION_NAME = os.getenv("SESSION_NAME", "userbot")
+
+# === Авто-ответы в общих чатах ===
+AUTO_REPLY_ENABLED = os.getenv("AUTO_REPLY_ENABLED", "true").lower() == "true"
+AUTO_REPLY_MIN_SCORE = int(os.getenv("AUTO_REPLY_MIN_SCORE", "8"))  # отвечаем только горячим
+AUTO_REPLY_PER_CHAT_DAY = int(os.getenv("AUTO_REPLY_PER_CHAT_DAY", "5"))  # лимит в чат/сутки
+AUTO_REPLY_DELAY_MIN = int(os.getenv("AUTO_REPLY_DELAY_MIN", "30"))  # секунд min
+AUTO_REPLY_DELAY_MAX = int(os.getenv("AUTO_REPLY_DELAY_MAX", "90"))  # секунд max
+AUTO_REPLY_MAX_AGE_MIN = int(os.getenv("AUTO_REPLY_MAX_AGE_MIN", "10"))  # минут — не отвечать на старое

@@ -120,6 +120,11 @@ async def broadcast_digest(text: str):
     await _broadcast(text=text)
 
 
+async def send_auto_reply_notice(lead_id: int, text: str):
+    """Шлёт всем подписчикам короткое уведомление об авто-ответе для конкретного лида."""
+    await _broadcast(text=f"Лид #{lead_id}\n{text}")
+
+
 # ─── команды ──────────────────────────────────────────────────────────
 
 async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -145,15 +150,38 @@ async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import config as _cfg
+    auto = "вкл ✅" if _cfg.AUTO_REPLY_ENABLED else "выкл ❌"
     await update.message.reply_text(
-        "Команды:\n"
-        "/leads [hot|warm|cold] — последние 10 лидов (или с фильтром)\n"
-        "/stats — статистика за 24ч / 7д / 30д\n"
-        "/chats — список мониторимых чатов\n"
-        "/add username — добавить чат\n"
-        "/remove username — убрать чат\n"
-        "/stop — отписаться от уведомлений"
+        f"Команды:\n"
+        f"/leads [hot|warm|cold] — последние 10 лидов\n"
+        f"/stats — статистика 24ч / 7д / 30д\n"
+        f"/chats — мониторимые чаты\n"
+        f"/add username — добавить чат\n"
+        f"/remove username — убрать чат\n"
+        f"/autoreply on|off — авто-ответы в чаты (сейчас: {auto})\n"
+        f"  Параметры: score≥{_cfg.AUTO_REPLY_MIN_SCORE}, "
+        f"лимит {_cfg.AUTO_REPLY_PER_CHAT_DAY}/чат/сутки, "
+        f"задержка {_cfg.AUTO_REPLY_DELAY_MIN}-{_cfg.AUTO_REPLY_DELAY_MAX}с\n"
+        f"/stop — отписаться"
     )
+
+
+async def _on_autoreply(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import config as _cfg
+    arg = (ctx.args[0].lower() if ctx.args else None)
+    if arg == "on":
+        _cfg.AUTO_REPLY_ENABLED = True
+        await update.message.reply_text("✅ Авто-ответы включены (применится мгновенно).")
+    elif arg == "off":
+        _cfg.AUTO_REPLY_ENABLED = False
+        await update.message.reply_text("❌ Авто-ответы выключены.")
+    else:
+        cur = "вкл ✅" if _cfg.AUTO_REPLY_ENABLED else "выкл ❌"
+        await update.message.reply_text(
+            f"Сейчас авто-ответы: {cur}\n"
+            f"Использование: /autoreply on  или  /autoreply off"
+        )
 
 
 async def _on_stop(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -339,6 +367,7 @@ async def init_bot() -> Application:
             app.add_handler(CommandHandler("chats", _on_chats))
             app.add_handler(CommandHandler("add", _on_add))
             app.add_handler(CommandHandler("remove", _on_remove))
+            app.add_handler(CommandHandler("autoreply", _on_autoreply))
             app.add_handler(CallbackQueryHandler(_on_callback))
             await app.initialize()
             await app.start()

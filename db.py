@@ -40,7 +40,39 @@ CREATE TABLE IF NOT EXISTS subscribers (
     first_name TEXT,
     added_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS auto_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lead_id INTEGER,
+    chat_id INTEGER,
+    reply_message_id INTEGER,
+    text TEXT,
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_auto_replies_chat ON auto_replies(chat_id, sent_at);
 """
+
+
+async def auto_replies_in_chat_24h(chat_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT COUNT(*) FROM auto_replies
+               WHERE chat_id = ?
+                 AND datetime(sent_at) >= datetime('now', '-24 hours')""",
+            (chat_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def log_auto_reply(lead_id: int, chat_id: int, reply_message_id: int, text: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO auto_replies (lead_id, chat_id, reply_message_id, text, sent_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (lead_id, chat_id, reply_message_id, text, datetime.utcnow().isoformat()),
+        )
+        await db.commit()
 
 
 async def init_db():

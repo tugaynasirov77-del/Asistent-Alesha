@@ -12,7 +12,12 @@ log = logging.getLogger(__name__)
 # Через Cloudflare Worker — прокси к api.anthropic.com из РФ
 PROXY_URL = os.getenv("PROXY_URL", "https://claude-proxy.mlbbgus924.workers.dev")
 PROXY_TOKEN = os.getenv("PROXY_TOKEN", "")
-MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+
+# Дешёвая модель Haiku для детектора (вызывается на каждое сообщение)
+# Дорогая Sonnet для регенерации черновика и smart-комментариев (вызывается редко)
+MODEL_FAST = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5")
+MODEL_SMART = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-5-20250929")
+MODEL = MODEL_SMART  # обратная совместимость для promo.py
 
 # api_key используется как x-api-key, но настоящий ключ хранится в Cloudflare Worker.
 # Авторизация на самом воркере идёт через Authorization: Bearer PROXY_TOKEN
@@ -102,6 +107,44 @@ REGEN_STYLES = {
 }
 
 
+# ─── Pre-filter (бесплатный, отсекает ~70% мусора до Claude) ─────────
+
+# Ключевые слова которые с высокой вероятностью означают
+# что сообщение хотя бы потенциально про автоматизацию / AI / бизнес-задачу
+_KEYWORDS = re.compile(
+    r"\b("
+    # AI / автоматизация
+    r"ai|ии|нейросе|нейрос|искусственн|чатбот|chat[\s-]?bot|chatgpt|gpt|claude|"
+    r"бот[ауеыо]?|боты|боту|боте|ботом|автоматиз|автоответ|"
+    # Разработка / сервисы
+    r"mini[\s-]?app|мини[\s-]?апп|telegram[\s-]?app|телеграм[\s-]?апп|"
+    r"разработ|программист|фрилансер|спец|подрядч|"
+    # CRM / запись
+    r"yclients|ыклиентс|amocrm|амо[\s-]?crm|битрикс|crm|срм|"
+    r"админ|секрет[ао]р|оператор|менеджер|"
+    r"запис[ьа]?ть|клиент|заявк|обработ|"
+    # Малый бизнес
+    r"салон|барбер|клиник|студи[яю]|кабинет|мастер|"
+    # Маркеры запроса
+    r"ищ[ауе]|посовет|помогите|нужен|нужн[аоы]|кто[\s-]?делал|кто[\s-]?знает|"
+    r"подскаж|порекоменд|выруча[йю]"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def is_potentially_relevant(text: str) -> bool:
+    """Бесплатный pre-filter: отсекаем заведомый мусор до Claude."""
+    if not text:
+        return False
+    t = text.strip()
+    if len(t) < 20:  # короткие реплики "ок", "+", "спасибо"
+        return False
+    if len(t) > 4000:  # лонгрид — режем дальше
+        t = t[:4000]
+    return bool(_KEYWORDS.search(t))
+
+
 def _extract_json(text: str) -> dict | None:
     text = text.strip()
     m = re.search(r"\{.*\}", text, re.S)
@@ -119,22 +162,25 @@ def _resp_text(resp) -> str:
 
 async def detect_lead(message_text: str, author: str, chat_title: str,
                       context: list[dict] | None = None) -> dict:
+    # Pre-filter: 70% сообщений мусор, отсекаем без вызова Claude
+    if not is_potentially_relevant(message_text):
+        return {"match": False, "_skipped": "pre_filter"}
+
     context_block = ""
     if context:
-        lines = [f"[{m.get('author', '?')}]: {m.get('text', '')}" for m in context]
+        # из контекста тоже берём только самые свежие 3 (а не 5), чтобы экономить токены
+        lines = [f"[{m.get('author', '?')}]: {m.get('text', '')[:200]}" for m in context[-3:]]
         context_block = (
-            "\n\nКонтекст чата (последние сообщения ДО целевого):\n"
-            + "\n".join(lines)
-            + "\n--- конец контекста ---\n"
+            "\n\nКонтекст чата:\n" + "\n".join(lines) + "\n---\n"
         )
     user_content = (
         f"Чат: {chat_title}\nАвтор: {author}{context_block}\n\n"
-        f"ЦЕЛЕВОЕ СООБЩЕНИЕ:\n{message_text}"
+        f"ЦЕЛЕВОЕ:\n{message_text[:1500]}"
     )
     try:
         resp = await client.messages.create(
-            model=MODEL,
-            max_tokens=600,
+            model=MODEL_FAST,  # Haiku — в 4 раза дешевле Sonnet
+            max_tokens=500,
             system=LEAD_DETECTOR_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
@@ -159,7 +205,7 @@ async def regenerate_draft(message_text: str, author: str, chat_title: str,
     )
     try:
         resp = await client.messages.create(
-            model=MODEL,
+            model=MODEL_SMART,  # Sonnet для качества переписки
             max_tokens=600,
             system=system,
             messages=[{

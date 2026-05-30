@@ -39,11 +39,22 @@ async def main():
     # Бот и дайджест — параллельно, монитор — основной таск
     bot_task = asyncio.create_task(_bot_lifecycle())
     digest_task = asyncio.create_task(digest_loop())
+    proactive_task = None
     try:
+        # запускаем проактивные посты после старта монитора
+        from proactive import proactive_loop
+        from monitor import user_client
+        # стартуем после задержки чтобы user_client успел подняться
+        async def _delayed_proactive():
+            await asyncio.sleep(60)
+            await proactive_loop(user_client)
+        proactive_task = asyncio.create_task(_delayed_proactive())
         await run_monitor()
     finally:
         bot_task.cancel()
         digest_task.cancel()
+        if proactive_task:
+            proactive_task.cancel()
 
 
 if __name__ == "__main__":

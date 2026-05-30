@@ -155,6 +155,7 @@ BTN_PROFILE = "🎯 Профиль"
 BTN_REACT = "📣 Реакции"
 BTN_AUTOREPLY = "💬 Авто-ответ"
 BTN_COMP_TOGGLE = "🎙 Smart-комменты"
+BTN_PROACTIVE = "🗣 Активные посты"
 BTN_HELP = "❓ Помощь"
 BTN_BACK = "« Назад"
 
@@ -178,7 +179,8 @@ def main_reply_kb() -> ReplyKeyboardMarkup:
             [BTN_FIND_CHATS, BTN_FIND_CHANNELS],
             [BTN_MY_CHATS, BTN_JOIN],
             [BTN_COMPS, BTN_PROFILE],
-            [BTN_REACT, BTN_AUTOREPLY, BTN_COMP_TOGGLE],
+            [BTN_REACT, BTN_AUTOREPLY],
+            [BTN_COMP_TOGGLE, BTN_PROACTIVE],
             [BTN_HELP],
         ],
         resize_keyboard=True, is_persistent=True,
@@ -274,11 +276,13 @@ async def _send_main_menu(chat_id: int, bot, text: str | None = None):
         auto = "✅" if _cfg.AUTO_REPLY_ENABLED else "❌"
         react = "✅" if PROMO_FLAGS["react_own"] else "❌"
         comp = "✅" if PROMO_FLAGS["comment_competitors"] else "❌"
+        proactive = "✅" if _cfg.PROACTIVE_ENABLED else "❌"
         text = (
             "🤖 <b>Алёша — главное меню</b>\n\n"
             f"📣 Реакции: {react}\n"
             f"💬 Авто-ответ: {auto}\n"
-            f"🎙 Smart-комменты: {comp}\n\n"
+            f"🎙 Smart-комменты: {comp}\n"
+            f"🗣 Активные посты: {proactive}\n\n"
             "Жми любую кнопку внизу 👇"
         )
     await bot.send_message(
@@ -409,6 +413,15 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         PROMO_FLAGS["comment_competitors"] = not PROMO_FLAGS["comment_competitors"]
         st = "✅ ВКЛ" if PROMO_FLAGS["comment_competitors"] else "❌ ВЫКЛ"
         await bot.send_message(chat_id=chat_id, text=f"🎙 Smart-комменты: {st}")
+        return
+
+    if txt == BTN_PROACTIVE:
+        _cfg.PROACTIVE_ENABLED = not _cfg.PROACTIVE_ENABLED
+        st = "✅ ВКЛ" if _cfg.PROACTIVE_ENABLED else "❌ ВЫКЛ"
+        await bot.send_message(chat_id=chat_id,
+            text=f"🗣 Активные посты Алёши в чатах: {st}\n"
+                 f"Лимит {_cfg.PROACTIVE_PER_CHAT_DAY}/чат/сутки, "
+                 f"пауза {_cfg.PROACTIVE_MIN_HOURS_BETWEEN}ч между ними.")
         return
 
     if txt == BTN_HELP:

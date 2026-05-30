@@ -44,4 +44,9 @@ AUTO_REPLY_MIN_SCORE = int(os.getenv("AUTO_REPLY_MIN_SCORE", "8"))  # отвеч
 AUTO_REPLY_PER_CHAT_DAY = int(os.getenv("AUTO_REPLY_PER_CHAT_DAY", "2"))  # лимит в чат/сутки
 AUTO_REPLY_DELAY_MIN = int(os.getenv("AUTO_REPLY_DELAY_MIN", "30"))  # секунд min
 AUTO_REPLY_DELAY_MAX = int(os.getenv("AUTO_REPLY_DELAY_MAX", "90"))  # секунд max
-AUTO_REPLY_MAX_AGE_MIN = int(os.getenv("AUTO_REPLY_MAX_AGE_MIN", "10"))  # минут — не отвечать на старое
+AUTO_REPLY_MAX_AGE_MIN = int(os.getenv("AUTO_REPLY_MAX_AGE_MIN", "10"))
+
+# === Проактивный постинг (Алёша сам пишет в чатах, не только в ответ на лидов) ===
+PROACTIVE_ENABLED = os.getenv("PROACTIVE_ENABLED", "false").lower() == "true"
+PROACTIVE_PER_CHAT_DAY = int(os.getenv("PROACTIVE_PER_CHAT_DAY", "2"))
+PROACTIVE_MIN_HOURS_BETWEEN = int(os.getenv("PROACTIVE_MIN_HOURS_BETWEEN", "4"))  # пауза в одном чате

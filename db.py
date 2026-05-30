@@ -57,7 +57,49 @@ CREATE TABLE IF NOT EXISTS auto_replies (
     sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_replies_chat ON auto_replies(chat_id, sent_at);
+
+CREATE TABLE IF NOT EXISTS proactive_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_username TEXT,
+    message_id INTEGER,
+    text TEXT,
+    sent_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_proactive_chat ON proactive_posts(chat_username, sent_at);
 """
+
+
+async def proactive_posts_in_chat_24h(chat_username: str) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT COUNT(*) FROM proactive_posts
+               WHERE chat_username = ?
+                 AND datetime(sent_at) >= datetime('now', '-24 hours')""",
+            (chat_username.lower(),),
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def last_proactive_post_in_chat(chat_username: str) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            """SELECT sent_at FROM proactive_posts WHERE chat_username = ?
+               ORDER BY id DESC LIMIT 1""",
+            (chat_username.lower(),),
+        ) as cur:
+            row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def log_proactive_post(chat_username: str, message_id: int, text: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """INSERT INTO proactive_posts (chat_username, message_id, text, sent_at)
+               VALUES (?, ?, ?, ?)""",
+            (chat_username.lower(), message_id, text, datetime.utcnow().isoformat()),
+        )
+        await db.commit()
 
 
 async def auto_replies_in_chat_24h(chat_id: int) -> int:

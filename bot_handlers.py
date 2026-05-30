@@ -138,6 +138,77 @@ async def send_auto_reply_notice(lead_id: int, text: str):
 
 # ─── команды ──────────────────────────────────────────────────────────
 
+def _main_menu_keyboard() -> InlineKeyboardMarkup:
+    import config as _cfg
+    from promo import PROMO_FLAGS
+    auto = "✅" if _cfg.AUTO_REPLY_ENABLED else "❌"
+    react = "✅" if PROMO_FLAGS["react_own"] else "❌"
+    comp = "✅" if PROMO_FLAGS["comment_competitors"] else "❌"
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📋 Лиды", callback_data="m:leads_menu"),
+            InlineKeyboardButton("📊 Stats", callback_data="m:stats"),
+        ],
+        [
+            InlineKeyboardButton("🔍 Найти чаты", callback_data="m:find_chats_menu"),
+            InlineKeyboardButton("🔎 Найти каналы", callback_data="m:find_ch_menu"),
+        ],
+        [
+            InlineKeyboardButton("💬 Мои чаты", callback_data="m:chats"),
+            InlineKeyboardButton("🤝 Вступить", callback_data="m:joinall"),
+        ],
+        [InlineKeyboardButton("📺 Каналы конкурентов", callback_data="m:comp_menu")],
+        [
+            InlineKeyboardButton(f"🎯 Профиль", callback_data="m:setprofile"),
+            InlineKeyboardButton(f"📣 React: {react}", callback_data="m:react_toggle"),
+        ],
+        [
+            InlineKeyboardButton(f"💬 Авто-ответ: {auto}", callback_data="m:autoreply_toggle"),
+            InlineKeyboardButton(f"📺 Комменты: {comp}", callback_data="m:comp_toggle"),
+        ],
+        [InlineKeyboardButton("❓ Помощь", callback_data="m:help")],
+    ])
+
+
+def _nishes_keyboard(prefix: str) -> InlineKeyboardMarkup:
+    """Меню выбора ниши. prefix = 'fc' (find chats) / 'fch' (find channels)."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💅 Beauty", callback_data=f"m:{prefix}:beauty"),
+         InlineKeyboardButton("🪪 Самозанятые", callback_data=f"m:{prefix}:selfworkers")],
+        [InlineKeyboardButton("📚 Услуги", callback_data=f"m:{prefix}:services"),
+         InlineKeyboardButton("⚙️ Автоматизация", callback_data=f"m:{prefix}:automation")],
+        [InlineKeyboardButton("« Назад", callback_data="m:main")],
+    ])
+
+
+def _leads_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔥 Горячие", callback_data="m:leads:hot"),
+         InlineKeyboardButton("☕ Тёплые", callback_data="m:leads:warm")],
+        [InlineKeyboardButton("🧊 Холодные", callback_data="m:leads:cold"),
+         InlineKeyboardButton("📋 Все", callback_data="m:leads:all")],
+        [InlineKeyboardButton("« Назад", callback_data="m:main")],
+    ])
+
+
+def _comp_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Список", callback_data="m:comp_list")],
+        [InlineKeyboardButton("« Назад", callback_data="m:main")],
+    ])
+
+
+async def _send_main_menu(chat_id: int, bot, text: str = "🤖 <b>Алёша — главное меню</b>\nВыбери что нужно:"):
+    await bot.send_message(
+        chat_id=chat_id, text=text,
+        reply_markup=_main_menu_keyboard(), parse_mode=ParseMode.HTML,
+    )
+
+
+async def _on_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await _send_main_menu(update.effective_chat.id, ctx.bot)
+
+
 async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
@@ -145,19 +216,8 @@ async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         return
     is_new = await add_subscriber(chat.id, user.username, user.first_name)
     if is_new:
-        await update.message.reply_text(
-            "✅ Подписан на уведомления о лидах.\n\n"
-            "Команды:\n"
-            "/leads — последние 10 лидов\n"
-            "/leads hot — только горячие\n"
-            "/stats — статистика за сегодня/неделю/месяц\n"
-            "/chats — список мониторимых чатов\n"
-            "/add username — добавить чат\n"
-            "/remove username — убрать чат\n"
-            "/stop — отписаться"
-        )
-    else:
-        await update.message.reply_text("Ты уже подписан. /help — список команд.")
+        await update.message.reply_text("✅ Подписан на уведомления о лидах.")
+    await _send_main_menu(chat.id, ctx.bot)
 
 
 async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -493,12 +553,186 @@ async def _on_remove(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # ─── callbacks от кнопок в уведомлениях ────────────────────────────────
 
+async def _handle_menu(query, ctx: ContextTypes.DEFAULT_TYPE, sid: str):
+    """Обработка клика по кнопке главного меню. sid формата 'leads_menu' / 'fc:beauty' / etc."""
+    import config as _cfg
+    from promo import PROMO_FLAGS
+    chat_id = query.message.chat_id
+
+    if sid == "main":
+        await query.edit_message_text(
+            "🤖 <b>Алёша — главное меню</b>\nВыбери что нужно:",
+            reply_markup=_main_menu_keyboard(), parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if sid == "leads_menu":
+        await query.edit_message_text(
+            "📋 <b>Лиды</b> — выбери фильтр:",
+            reply_markup=_leads_keyboard(), parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if sid.startswith("leads:"):
+        kind = sid.split(":", 1)[1]
+        await query.answer("Гружу...", show_alert=False)
+        # Эмулируем команду /leads через ctx.args
+        from telegram import Update as _U
+        class _Msg:
+            chat_id = query.message.chat_id
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        ctx.args = [] if kind == "all" else [kind]
+        await _on_leads(_Upd(), ctx)
+        return
+
+    if sid == "stats":
+        await query.answer("Гружу...", show_alert=False)
+        class _Msg:
+            chat_id_ = chat_id
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        await _on_stats(_Upd(), ctx)
+        return
+
+    if sid == "chats":
+        await query.answer("Гружу...", show_alert=False)
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        await _on_chats(_Upd(), ctx)
+        return
+
+    if sid == "joinall":
+        await query.answer("Запускаю /joinall...", show_alert=True)
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+            effective_chat = type("C", (), {"id": chat_id})()
+        await _on_joinall(_Upd(), ctx)
+        return
+
+    if sid == "setprofile":
+        await query.answer("Обновляю профиль...", show_alert=False)
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        await _on_setprofile(_Upd(), ctx)
+        return
+
+    if sid == "react_toggle":
+        PROMO_FLAGS["react_own"] = not PROMO_FLAGS["react_own"]
+        await query.edit_message_reply_markup(reply_markup=_main_menu_keyboard())
+        await ctx.bot.send_message(
+            chat_id=chat_id,
+            text=f"📣 Авто-реакции на свои посты: "
+                 f"{'включены ✅' if PROMO_FLAGS['react_own'] else 'выключены ❌'}",
+        )
+        return
+
+    if sid == "autoreply_toggle":
+        _cfg.AUTO_REPLY_ENABLED = not _cfg.AUTO_REPLY_ENABLED
+        await query.edit_message_reply_markup(reply_markup=_main_menu_keyboard())
+        await ctx.bot.send_message(
+            chat_id=chat_id,
+            text=f"💬 Авто-ответы в чатах: "
+                 f"{'включены ✅' if _cfg.AUTO_REPLY_ENABLED else 'выключены ❌'}",
+        )
+        return
+
+    if sid == "comp_toggle":
+        PROMO_FLAGS["comment_competitors"] = not PROMO_FLAGS["comment_competitors"]
+        await query.edit_message_reply_markup(reply_markup=_main_menu_keyboard())
+        await ctx.bot.send_message(
+            chat_id=chat_id,
+            text=f"📺 Smart-комменты под конкурентами: "
+                 f"{'включены ✅' if PROMO_FLAGS['comment_competitors'] else 'выключены ❌'}",
+        )
+        return
+
+    if sid == "comp_menu":
+        from promo import COMPETITORS
+        items = sorted(COMPETITORS) or ["(пусто)"]
+        text = (
+            "📺 <b>Каналы для smart-комментариев</b>\n\n"
+            + "\n".join(f"• @{c}" for c in items if c != "(пусто)" or items == ["(пусто)"])
+            + f"\n\nВсего: {len(COMPETITORS)}\n\n"
+            "Добавить новые: «🔎 Найти каналы» в главном меню."
+        )
+        await query.edit_message_text(
+            text, parse_mode=ParseMode.HTML, reply_markup=_comp_keyboard(),
+        )
+        return
+
+    if sid == "find_chats_menu":
+        await query.edit_message_text(
+            "💬 <b>Поиск чатов</b> — выбери нишу:",
+            reply_markup=_nishes_keyboard("fc"), parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if sid == "find_ch_menu":
+        await query.edit_message_text(
+            "📺 <b>Поиск каналов</b> — выбери нишу:",
+            reply_markup=_nishes_keyboard("fch"), parse_mode=ParseMode.HTML,
+        )
+        return
+
+    if sid.startswith("fc:"):
+        niche = sid.split(":", 1)[1]
+        await query.answer(f"Ищу чаты в нише {niche}...", show_alert=False)
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        ctx.args = [niche]
+        await _on_findchats(_Upd(), ctx)
+        return
+
+    if sid.startswith("fch:"):
+        niche = sid.split(":", 1)[1]
+        await query.answer(f"Ищу каналы в нише {niche}...", show_alert=False)
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        ctx.args = [niche]
+        await _on_findchannels(_Upd(), ctx)
+        return
+
+    if sid == "help":
+        class _Msg:
+            async def reply_text(self, text, **kwargs):
+                await ctx.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        class _Upd:
+            message = _Msg()
+        await _on_help(_Upd(), ctx)
+        return
+
+
 async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if not query.data or ":" not in query.data:
         return
     action, sid = query.data.split(":", 1)
+
+    # ─── главное меню ───────────────────────────────────────────────
+    if action == "m":
+        await _handle_menu(query, ctx, sid)
+        return
 
     # discovery callbacks — sid это username, не lead_id
     if action in {"dca", "dct", "dcx"}:
@@ -609,6 +843,7 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("discover", _on_discover))
             app.add_handler(CommandHandler("findchannels", _on_findchannels))
             app.add_handler(CommandHandler("findchats", _on_findchats))
+            app.add_handler(CommandHandler("menu", _on_menu))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(CallbackQueryHandler(_on_callback))

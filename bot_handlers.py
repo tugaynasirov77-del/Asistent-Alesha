@@ -180,38 +180,41 @@ async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def _on_discover(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Алёша сам ищет каналы/чаты по нише и присылает кандидатов с кнопками."""
+async def _do_discover(update, ctx, kind: str):
+    """Общий хелпер: kind = 'chats' | 'channels' | 'both'."""
     from monitor import user_client
-    from discovery import discover_candidates, KEYWORD_PACKS
+    from discovery import discover_candidates, CHAT_PACKS, CHANNEL_PACKS
 
+    packs_map = CHANNEL_PACKS if kind == "channels" else CHAT_PACKS
     pack = (ctx.args[0].lower() if ctx.args else "beauty")
-    if pack not in KEYWORD_PACKS:
+    if pack not in packs_map:
         await update.message.reply_text(
-            "Доступные ниши:\n"
-            + "\n".join(f"• /discover {p}" for p in KEYWORD_PACKS) +
-            f"\n\nПо умолчанию: /discover beauty"
+            "Доступные ниши:\n" + "\n".join(f"• {p}" for p in packs_map)
         )
         return
 
+    label = {"chats": "ЧАТЫ", "channels": "КАНАЛЫ", "both": "каналы и чаты"}[kind]
     await update.message.reply_text(
-        f"🔍 Ищу каналы и чаты в нише «{pack}»... 30-60 секунд."
+        f"🔍 Ищу {label} в нише «{pack}»... 30-60 секунд."
     )
     try:
-        candidates = await discover_candidates(user_client, pack, max_results=10)
+        candidates = await discover_candidates(user_client, pack, kind=kind, max_results=10)
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка поиска: {e}")
         return
 
     if not candidates:
-        await update.message.reply_text("Ничего нового не нашёл. Попробуй другую нишу.")
+        await update.message.reply_text(
+            f"Ничего нового не нашёл в нише «{pack}». "
+            f"Попробуй другую: services / automation / selfworkers"
+        )
         return
 
     await update.message.reply_text(f"Нашёл {len(candidates)} кандидатов:")
     for c in candidates:
-        kind = "📺 канал" if c["is_channel"] else ("💬 чат" if c["is_megagroup"] else "❓")
+        kind_emoji = "📺 канал" if c["is_channel"] else ("💬 чат" if c["is_megagroup"] else "❓")
         text = (
-            f"{kind} <b>{c['title']}</b>\n"
+            f"{kind_emoji} <b>{c['title']}</b>\n"
             f"@{c['username']}  ·  {c['participants_count']:,} участников\n"
             f"Найден по запросу: «{c['matched_query']}»"
         )
@@ -231,6 +234,21 @@ async def _on_discover(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             text, parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup(kb_rows),
         )
+
+
+async def _on_discover(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Общий поиск (чаты + каналы)."""
+    await _do_discover(update, ctx, kind="both")
+
+
+async def _on_findchannels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Поиск ТОЛЬКО каналов для smart-комментариев."""
+    await _do_discover(update, ctx, kind="channels")
+
+
+async def _on_findchats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Поиск ТОЛЬКО чатов для мониторинга лидов."""
+    await _do_discover(update, ctx, kind="chats")
 
 
 async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -589,6 +607,8 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("setprofile", _on_setprofile))
             app.add_handler(CommandHandler("joinall", _on_joinall))
             app.add_handler(CommandHandler("discover", _on_discover))
+            app.add_handler(CommandHandler("findchannels", _on_findchannels))
+            app.add_handler(CommandHandler("findchats", _on_findchats))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(CallbackQueryHandler(_on_callback))

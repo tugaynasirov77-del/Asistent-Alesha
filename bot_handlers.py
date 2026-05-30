@@ -179,6 +179,59 @@ async def _on_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _on_discover(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Алёша сам ищет каналы/чаты по нише и присылает кандидатов с кнопками."""
+    from monitor import user_client
+    from discovery import discover_candidates, KEYWORD_PACKS
+
+    pack = (ctx.args[0].lower() if ctx.args else "beauty")
+    if pack not in KEYWORD_PACKS:
+        await update.message.reply_text(
+            "Доступные ниши:\n"
+            + "\n".join(f"• /discover {p}" for p in KEYWORD_PACKS) +
+            f"\n\nПо умолчанию: /discover beauty"
+        )
+        return
+
+    await update.message.reply_text(
+        f"🔍 Ищу каналы и чаты в нише «{pack}»... 30-60 секунд."
+    )
+    try:
+        candidates = await discover_candidates(user_client, pack, max_results=10)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка поиска: {e}")
+        return
+
+    if not candidates:
+        await update.message.reply_text("Ничего нового не нашёл. Попробуй другую нишу.")
+        return
+
+    await update.message.reply_text(f"Нашёл {len(candidates)} кандидатов:")
+    for c in candidates:
+        kind = "📺 канал" if c["is_channel"] else ("💬 чат" if c["is_megagroup"] else "❓")
+        text = (
+            f"{kind} <b>{c['title']}</b>\n"
+            f"@{c['username']}  ·  {c['participants_count']:,} участников\n"
+            f"Найден по запросу: «{c['matched_query']}»"
+        )
+        kb_rows = []
+        if c["is_channel"]:
+            kb_rows.append([
+                InlineKeyboardButton("➕ В комменты (smart)", callback_data=f"dca:{c['username']}"),
+                InlineKeyboardButton("👁 Открыть", url=f"https://t.me/{c['username']}"),
+            ])
+        else:
+            kb_rows.append([
+                InlineKeyboardButton("➕ В мониторинг чатов", callback_data=f"dct:{c['username']}"),
+                InlineKeyboardButton("👁 Открыть", url=f"https://t.me/{c['username']}"),
+            ])
+        kb_rows.append([InlineKeyboardButton("❌ Скип", callback_data=f"dcx:{c['username']}")])
+        await update.message.reply_text(
+            text, parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(kb_rows),
+        )
+
+
 async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Userbot вступает во все dynamic_chats где ещё не состоит.
     С задержкой 40-90 секунд между чатами, чтобы Telegram не заподозрил массовый join."""
@@ -419,6 +472,28 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not query.data or ":" not in query.data:
         return
     action, sid = query.data.split(":", 1)
+
+    # discovery callbacks — sid это username, не lead_id
+    if action in {"dca", "dct", "dcx"}:
+        uname = sid.lower()
+        if action == "dca":
+            from promo import COMPETITORS
+            COMPETITORS.add(uname)
+            await query.edit_message_text(
+                f"✅ @{uname} добавлен в smart-комменты.\n"
+                f"Активировать: /comp on"
+            )
+        elif action == "dct":
+            from db import add_dynamic_chat
+            await add_dynamic_chat(uname, 0)
+            await query.edit_message_text(
+                f"✅ @{uname} добавлен в мониторинг чатов.\n"
+                f"Не забудь вступить: /joinall"
+            )
+        else:
+            await query.edit_message_text(f"⏭ @{uname} пропущен")
+        return
+
     try:
         lead_id = int(sid)
     except ValueError:
@@ -504,6 +579,7 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("autoreply", _on_autoreply))
             app.add_handler(CommandHandler("setprofile", _on_setprofile))
             app.add_handler(CommandHandler("joinall", _on_joinall))
+            app.add_handler(CommandHandler("discover", _on_discover))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(CallbackQueryHandler(_on_callback))

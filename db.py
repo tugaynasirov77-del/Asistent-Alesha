@@ -43,6 +43,11 @@ CREATE TABLE IF NOT EXISTS subscribers (
     added_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS competitors (
+    username TEXT PRIMARY KEY,
+    added_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS auto_replies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     lead_id INTEGER,
@@ -105,6 +110,35 @@ async def save_lead(user_id, username, name, chat_title, chat_id, message,
         )
         await db.commit()
         return cur.lastrowid
+
+
+async def add_competitor(username: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute(
+                "INSERT INTO competitors (username, added_at) VALUES (?, ?)",
+                (username.lower(), datetime.utcnow().isoformat()),
+            )
+            await db.commit()
+            return True
+        except aiosqlite.IntegrityError:
+            return False
+
+
+async def remove_competitor(username: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "DELETE FROM competitors WHERE username = ?", (username.lower(),)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_competitors() -> list[str]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT username FROM competitors ORDER BY username") as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
 
 
 async def add_dynamic_chat(username: str, added_by: int) -> bool:

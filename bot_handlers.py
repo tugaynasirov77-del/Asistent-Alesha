@@ -654,11 +654,13 @@ async def _on_comp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     cmd = ctx.args[0].lower()
     if cmd == "add" and len(ctx.args) >= 2:
         u = ctx.args[1].lstrip("@").lower()
-        COMPETITORS.add(u)
-        await update.message.reply_text(f"✅ Добавлен @{u}. Состою ли я в нём — проверь сам.")
+        from promo import add_competitor_persisted
+        await add_competitor_persisted(u)
+        await update.message.reply_text(f"✅ Добавлен @{u}. Сохранён в БД.")
     elif cmd == "remove" and len(ctx.args) >= 2:
         u = ctx.args[1].lstrip("@").lower()
-        COMPETITORS.discard(u)
+        from promo import remove_competitor_persisted
+        await remove_competitor_persisted(u)
         await update.message.reply_text(f"✅ Убран @{u}.")
     elif cmd == "on":
         PROMO_FLAGS["comment_competitors"] = True
@@ -991,18 +993,18 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if action in {"dca", "dct", "dcx"}:
         uname = sid.lower()
         if action == "dca":
-            from promo import COMPETITORS
-            COMPETITORS.add(uname)
+            from promo import add_competitor_persisted
+            await add_competitor_persisted(uname)
             await query.edit_message_text(
                 f"✅ @{uname} добавлен в smart-комменты.\n"
-                f"Активировать: /comp on"
+                f"Активировать: жми «🎙 Smart-комменты» в меню."
             )
         elif action == "dct":
             from db import add_dynamic_chat
             await add_dynamic_chat(uname, 0)
             await query.edit_message_text(
                 f"✅ @{uname} добавлен в мониторинг чатов.\n"
-                f"Не забудь вступить: /joinall"
+                f"Не забудь «🤝 Вступить» в меню."
             )
         else:
             await query.edit_message_text(f"⏭ @{uname} пропущен")

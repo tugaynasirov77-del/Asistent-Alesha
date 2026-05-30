@@ -32,8 +32,33 @@ PROFILE_BIO = os.getenv(
 
 REACTIONS = ["🔥", "❤️", "👍", "💯", "🤯"]
 
-# Каналы конкурентов/смежные — где сидит ЦА. Управляются через /comp_add /comp_remove
+# Каналы конкурентов/смежные — где сидит ЦА.
+# Хранится в БД, в памяти держим как кэш.
 COMPETITORS: set[str] = set()
+
+
+async def reload_competitors_from_db():
+    """Подгружает список из БД в COMPETITORS. Вызывать на старте."""
+    from db import list_competitors
+    items = await list_competitors()
+    COMPETITORS.clear()
+    COMPETITORS.update(items)
+    log.info("COMPETITORS loaded from DB: %s items", len(items))
+
+
+async def add_competitor_persisted(username: str) -> bool:
+    """Добавляет в БД И в кэш. Возвращает True если новый."""
+    from db import add_competitor
+    ok = await add_competitor(username)
+    COMPETITORS.add(username.lower())
+    return ok
+
+
+async def remove_competitor_persisted(username: str) -> bool:
+    from db import remove_competitor
+    ok = await remove_competitor(username)
+    COMPETITORS.discard(username.lower())
+    return ok
 
 # вкл/выкл механик (можно гонять командами)
 PROMO_FLAGS = {

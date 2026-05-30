@@ -30,6 +30,12 @@ async def _bot_lifecycle():
 
 async def main():
     await init_db()
+    # подгружаем сохранённый список каналов для smart-комментариев
+    try:
+        from promo import reload_competitors_from_db
+        await reload_competitors_from_db()
+    except Exception as e:
+        logging.warning("Could not load competitors: %s", e)
     # Бот и дайджест — параллельно, монитор — основной таск
     bot_task = asyncio.create_task(_bot_lifecycle())
     digest_task = asyncio.create_task(digest_loop())

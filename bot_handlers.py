@@ -329,11 +329,13 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # Прокси: все bot.send_message внутри этой функции автоматически трекаются
+    # Прокси: все bot.send_message внутри автоматически трекаются
+    # и получают reply_markup по умолчанию (чтобы клавиатура не исчезала)
     class _TBot:
         def __init__(self, real):
             self._b = real
         async def send_message(self, **kwargs):
+            kwargs.setdefault("reply_markup", main_reply_kb())
             m = await self._b.send_message(**kwargs)
             ctx.user_data.setdefault("menu_msgs", []).append(m.message_id)
             return m
@@ -565,7 +567,8 @@ async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     from monitor import user_client
     from telethon.errors import (
         ChannelsTooMuchError, UserAlreadyParticipantError, ChannelPrivateError,
-        InviteRequestSentError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError,
+        InviteRequestSentError, InviteHashExpiredError, InviteHashInvalidError,
+        FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError,
     )
     chats = await list_unjoined_chats()
     total_known = len(await list_dynamic_chats())
@@ -593,9 +596,13 @@ async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             joined += 1
             status = "✅ вступил"
         except UserAlreadyParticipantError:
-            await mark_chat_joined(uname)  # запомним чтобы не дёргать снова
+            await mark_chat_joined(uname)
             already += 1
             status = "ℹ️ уже состоит — отметил"
+        except InviteRequestSentError:
+            await mark_chat_joined(uname)
+            joined += 1
+            status = "📨 заявка отправлена (приватный, ждём одобрения)"
         except (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError) as e:
             skipped += 1
             status = f"⏭ пропущен ({type(e).__name__})"

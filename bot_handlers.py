@@ -291,6 +291,25 @@ async def _on_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _send_main_menu(update.effective_chat.id, ctx.bot)
 
 
+async def _cleanup_menu_messages(chat_id: int, ctx: ContextTypes.DEFAULT_TYPE, bot):
+    """Удаляет ВСЕ предыдущие сообщения бота, накопленные в этой 'сессии меню',
+    чтобы чат оставался чистым."""
+    msgs = ctx.user_data.get("menu_msgs", [])
+    for mid in msgs:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=mid)
+        except Exception:
+            pass
+    ctx.user_data["menu_msgs"] = []
+
+
+async def _send_tracked(ctx, bot, chat_id: int, **kwargs):
+    """Отправить сообщение и запомнить id для последующей очистки."""
+    msg = await bot.send_message(chat_id=chat_id, **kwargs)
+    ctx.user_data.setdefault("menu_msgs", []).append(msg.message_id)
+    return msg
+
+
 async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Главный диспетчер reply-кнопок."""
     import config as _cfg
@@ -301,6 +320,26 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     txt = msg.text.strip()
     chat_id = msg.chat_id
     bot = ctx.bot
+
+    # подчищаем прошлые ответы бота — чат не засоряется
+    await _cleanup_menu_messages(chat_id, ctx, bot)
+    # и сообщение-команду пользователя тоже
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
+    # Прокси: все bot.send_message внутри этой функции автоматически трекаются
+    class _TBot:
+        def __init__(self, real):
+            self._b = real
+        async def send_message(self, **kwargs):
+            m = await self._b.send_message(**kwargs)
+            ctx.user_data.setdefault("menu_msgs", []).append(m.message_id)
+            return m
+        def __getattr__(self, name):
+            return getattr(self._b, name)
+    bot = _TBot(bot)
 
     # ─── Главное меню → подменю/действия ──────────────────────
     if txt == BTN_LEADS:
@@ -354,26 +393,20 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if txt == BTN_REACT:
         PROMO_FLAGS["react_own"] = not PROMO_FLAGS["react_own"]
-        await bot.send_message(chat_id=chat_id,
-            text=f"📣 Реакции на свои посты: "
-                 f"{'включены ✅' if PROMO_FLAGS['react_own'] else 'выключены ❌'}")
-        await _send_main_menu(chat_id, bot)
+        st = "✅ ВКЛ" if PROMO_FLAGS["react_own"] else "❌ ВЫКЛ"
+        await bot.send_message(chat_id=chat_id, text=f"📣 Реакции: {st}")
         return
 
     if txt == BTN_AUTOREPLY:
         _cfg.AUTO_REPLY_ENABLED = not _cfg.AUTO_REPLY_ENABLED
-        await bot.send_message(chat_id=chat_id,
-            text=f"💬 Авто-ответы в чатах: "
-                 f"{'включены ✅' if _cfg.AUTO_REPLY_ENABLED else 'выключены ❌'}")
-        await _send_main_menu(chat_id, bot)
+        st = "✅ ВКЛ" if _cfg.AUTO_REPLY_ENABLED else "❌ ВЫКЛ"
+        await bot.send_message(chat_id=chat_id, text=f"💬 Авто-ответ: {st}")
         return
 
     if txt == BTN_COMP_TOGGLE:
         PROMO_FLAGS["comment_competitors"] = not PROMO_FLAGS["comment_competitors"]
-        await bot.send_message(chat_id=chat_id,
-            text=f"🎙 Smart-комменты под чужими каналами: "
-                 f"{'включены ✅' if PROMO_FLAGS['comment_competitors'] else 'выключены ❌'}")
-        await _send_main_menu(chat_id, bot)
+        st = "✅ ВКЛ" if PROMO_FLAGS["comment_competitors"] else "❌ ВЫКЛ"
+        await bot.send_message(chat_id=chat_id, text=f"🎙 Smart-комменты: {st}")
         return
 
     if txt == BTN_HELP:
@@ -382,7 +415,7 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if txt == BTN_BACK:
         ctx.user_data.pop("mode", None)
-        await _send_main_menu(chat_id, bot)
+        await bot.send_message(chat_id=chat_id, text="↩️", reply_markup=main_reply_kb())
         return
 
     # ─── Подменю ниш (после Найти чаты / Найти каналы) ─────────
@@ -399,9 +432,13 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await _on_findchannels(update, ctx)
         else:
             await bot.send_message(chat_id=chat_id,
-                text="Сначала выбери «🔍 Найти чаты» или «🔎 Найти каналы» из главного меню.")
+                text="Сначала «🔍 Найти чаты» или «🔎 Найти каналы».",
+                reply_markup=main_reply_kb())
+            return
         ctx.user_data.pop("mode", None)
-        await _send_main_menu(chat_id, bot)
+        # возвращаем главную клавиатуру одним коротким сообщением
+        await bot.send_message(chat_id=chat_id, text="✅ Поиск завершён",
+                               reply_markup=main_reply_kb())
         return
 
     # ─── Подменю лидов ─────────────────────────────────────────
@@ -412,7 +449,9 @@ async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if txt in leads_map:
         ctx.args = leads_map[txt]
         await _on_leads(update, ctx)
-        await _send_main_menu(chat_id, bot)
+        # возвращаем главную клавиатуру
+        await bot.send_message(chat_id=chat_id, text="↩️",
+                               reply_markup=main_reply_kb())
         return
 
 

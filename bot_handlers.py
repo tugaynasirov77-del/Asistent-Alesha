@@ -690,6 +690,51 @@ async def _subscribe_to_competitors(update, ctx):
     await update.message.reply_text("🏁 Готово.")
 
 
+async def _on_auditchats(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Проверяет права писать в каждом dynamic_chat. Удаляет те где нельзя."""
+    from monitor import user_client
+    from db import list_dynamic_chats, remove_dynamic_chat
+    chats = await list_dynamic_chats()
+    if not chats:
+        await update.message.reply_text("dynamic_chats пуст.")
+        return
+    await update.message.reply_text(
+        f"🔎 Проверяю права в {len(chats)} чатах. Пауза 2-5с между проверками."
+    )
+    import asyncio as _asyncio
+    import random as _random
+    can_write = []
+    cannot_write = []
+    errors = []
+    for i, uname in enumerate(chats, 1):
+        try:
+            entity = await user_client.get_entity(uname)
+            perms = await user_client.get_permissions(entity, "me")
+            if getattr(perms, "send_messages", True) is False:
+                cannot_write.append(uname)
+                await remove_dynamic_chat(uname)
+                status = "🚫 нельзя писать → удалил"
+            else:
+                can_write.append(uname)
+                status = "✅ можно"
+        except Exception as e:
+            errors.append((uname, str(e)[:80]))
+            status = f"⚠️ {type(e).__name__}"
+        # шлём кратко каждые 5
+        if i % 5 == 0 or i == len(chats):
+            await update.message.reply_text(f"[{i}/{len(chats)}] @{uname}: {status}")
+        await _asyncio.sleep(_random.uniform(2, 5))
+    summary = (
+        f"🏁 Итог:\n"
+        f"✅ Можно писать: {len(can_write)}\n"
+        f"🚫 Нельзя (удалены): {len(cannot_write)}\n"
+        f"⚠️ Ошибки: {len(errors)}\n"
+    )
+    if cannot_write:
+        summary += "\nУдалены:\n" + "\n".join(f"• @{u}" for u in cannot_write[:20])
+    await update.message.reply_text(summary)
+
+
 async def _on_subcomps(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Подписаться userbot'ом на все каналы из COMPETITORS."""
     await _subscribe_to_competitors(update, ctx)
@@ -1164,6 +1209,7 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("menu", _on_menu))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("subcomps", _on_subcomps))
+            app.add_handler(CommandHandler("auditchats", _on_auditchats))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(MessageHandler(
                 filters.TEXT & ~filters.COMMAND, _on_reply_button

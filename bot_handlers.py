@@ -2,10 +2,14 @@
 import logging
 import os
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton, InlineKeyboardMarkup, Update,
+    KeyboardButton, ReplyKeyboardMarkup,
+)
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application, CallbackQueryHandler, CommandHandler, ContextTypes,
+    MessageHandler, filters,
 )
 from telegram.request import HTTPXRequest
 
@@ -138,6 +142,71 @@ async def send_auto_reply_notice(lead_id: int, text: str):
 
 # ─── команды ──────────────────────────────────────────────────────────
 
+# ─── Reply keyboards (постоянные кнопки внизу) ───────────────────────
+
+BTN_LEADS = "🔥 Лиды"
+BTN_STATS = "📊 Stats"
+BTN_FIND_CHATS = "🔍 Найти чаты"
+BTN_FIND_CHANNELS = "🔎 Найти каналы"
+BTN_MY_CHATS = "💬 Мои чаты"
+BTN_JOIN = "🤝 Вступить"
+BTN_COMPS = "📺 Каналы конкурентов"
+BTN_PROFILE = "🎯 Профиль"
+BTN_REACT = "📣 Реакции"
+BTN_AUTOREPLY = "💬 Авто-ответ"
+BTN_COMP_TOGGLE = "🎙 Smart-комменты"
+BTN_HELP = "❓ Помощь"
+BTN_BACK = "« Назад"
+
+# Подменю ниш
+BTN_N_BEAUTY = "💅 Beauty"
+BTN_N_SELF = "🪪 Самозанятые"
+BTN_N_SERV = "📚 Услуги"
+BTN_N_AUTO = "⚙️ Автоматизация"
+
+# Подменю лидов
+BTN_L_HOT = "🔥 Горячие"
+BTN_L_WARM = "☕ Тёплые"
+BTN_L_COLD = "🧊 Холодные"
+BTN_L_ALL = "📋 Все"
+
+
+def main_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [BTN_LEADS, BTN_STATS],
+            [BTN_FIND_CHATS, BTN_FIND_CHANNELS],
+            [BTN_MY_CHATS, BTN_JOIN],
+            [BTN_COMPS, BTN_PROFILE],
+            [BTN_REACT, BTN_AUTOREPLY, BTN_COMP_TOGGLE],
+            [BTN_HELP],
+        ],
+        resize_keyboard=True, is_persistent=True,
+    )
+
+
+def nishes_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [BTN_N_BEAUTY, BTN_N_SELF],
+            [BTN_N_SERV, BTN_N_AUTO],
+            [BTN_BACK],
+        ],
+        resize_keyboard=True, is_persistent=True,
+    )
+
+
+def leads_reply_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [
+            [BTN_L_HOT, BTN_L_WARM],
+            [BTN_L_COLD, BTN_L_ALL],
+            [BTN_BACK],
+        ],
+        resize_keyboard=True, is_persistent=True,
+    )
+
+
 def _main_menu_keyboard() -> InlineKeyboardMarkup:
     import config as _cfg
     from promo import PROMO_FLAGS
@@ -198,15 +267,153 @@ def _comp_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
-async def _send_main_menu(chat_id: int, bot, text: str = "🤖 <b>Алёша — главное меню</b>\nВыбери что нужно:"):
+async def _send_main_menu(chat_id: int, bot, text: str | None = None):
+    import config as _cfg
+    from promo import PROMO_FLAGS
+    if text is None:
+        auto = "✅" if _cfg.AUTO_REPLY_ENABLED else "❌"
+        react = "✅" if PROMO_FLAGS["react_own"] else "❌"
+        comp = "✅" if PROMO_FLAGS["comment_competitors"] else "❌"
+        text = (
+            "🤖 <b>Алёша — главное меню</b>\n\n"
+            f"📣 Реакции: {react}\n"
+            f"💬 Авто-ответ: {auto}\n"
+            f"🎙 Smart-комменты: {comp}\n\n"
+            "Жми любую кнопку внизу 👇"
+        )
     await bot.send_message(
         chat_id=chat_id, text=text,
-        reply_markup=_main_menu_keyboard(), parse_mode=ParseMode.HTML,
+        reply_markup=main_reply_kb(), parse_mode=ParseMode.HTML,
     )
 
 
 async def _on_menu(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await _send_main_menu(update.effective_chat.id, ctx.bot)
+
+
+async def _on_reply_button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Главный диспетчер reply-кнопок."""
+    import config as _cfg
+    from promo import PROMO_FLAGS, COMPETITORS
+    msg = update.message
+    if not msg or not msg.text:
+        return
+    txt = msg.text.strip()
+    chat_id = msg.chat_id
+    bot = ctx.bot
+
+    # ─── Главное меню → подменю/действия ──────────────────────
+    if txt == BTN_LEADS:
+        await bot.send_message(chat_id=chat_id,
+            text="🔥 <b>Лиды</b> — выбери фильтр:",
+            reply_markup=leads_reply_kb(), parse_mode=ParseMode.HTML)
+        return
+
+    if txt == BTN_STATS:
+        ctx.args = []
+        await _on_stats(update, ctx)
+        return
+
+    if txt == BTN_FIND_CHATS:
+        ctx.user_data["mode"] = "find_chats"
+        await bot.send_message(chat_id=chat_id,
+            text="💬 <b>Поиск чатов</b> — выбери нишу:",
+            reply_markup=nishes_reply_kb(), parse_mode=ParseMode.HTML)
+        return
+
+    if txt == BTN_FIND_CHANNELS:
+        ctx.user_data["mode"] = "find_channels"
+        await bot.send_message(chat_id=chat_id,
+            text="📺 <b>Поиск каналов</b> — выбери нишу:",
+            reply_markup=nishes_reply_kb(), parse_mode=ParseMode.HTML)
+        return
+
+    if txt == BTN_MY_CHATS:
+        ctx.args = []
+        await _on_chats(update, ctx)
+        return
+
+    if txt == BTN_JOIN:
+        await _on_joinall(update, ctx)
+        return
+
+    if txt == BTN_COMPS:
+        items = sorted(COMPETITORS) or ["(пусто)"]
+        text = (
+            "📺 <b>Каналы для smart-комментариев</b>\n\n"
+            + "\n".join(f"• @{c}" for c in items if c != "(пусто)")
+            + ("\n(пусто)" if not COMPETITORS else "")
+            + f"\n\nВсего: {len(COMPETITORS)}\n\nДобавить — кнопка «🔎 Найти каналы»"
+        )
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML)
+        return
+
+    if txt == BTN_PROFILE:
+        await _on_setprofile(update, ctx)
+        return
+
+    if txt == BTN_REACT:
+        PROMO_FLAGS["react_own"] = not PROMO_FLAGS["react_own"]
+        await bot.send_message(chat_id=chat_id,
+            text=f"📣 Реакции на свои посты: "
+                 f"{'включены ✅' if PROMO_FLAGS['react_own'] else 'выключены ❌'}")
+        await _send_main_menu(chat_id, bot)
+        return
+
+    if txt == BTN_AUTOREPLY:
+        _cfg.AUTO_REPLY_ENABLED = not _cfg.AUTO_REPLY_ENABLED
+        await bot.send_message(chat_id=chat_id,
+            text=f"💬 Авто-ответы в чатах: "
+                 f"{'включены ✅' if _cfg.AUTO_REPLY_ENABLED else 'выключены ❌'}")
+        await _send_main_menu(chat_id, bot)
+        return
+
+    if txt == BTN_COMP_TOGGLE:
+        PROMO_FLAGS["comment_competitors"] = not PROMO_FLAGS["comment_competitors"]
+        await bot.send_message(chat_id=chat_id,
+            text=f"🎙 Smart-комменты под чужими каналами: "
+                 f"{'включены ✅' if PROMO_FLAGS['comment_competitors'] else 'выключены ❌'}")
+        await _send_main_menu(chat_id, bot)
+        return
+
+    if txt == BTN_HELP:
+        await _on_help(update, ctx)
+        return
+
+    if txt == BTN_BACK:
+        ctx.user_data.pop("mode", None)
+        await _send_main_menu(chat_id, bot)
+        return
+
+    # ─── Подменю ниш (после Найти чаты / Найти каналы) ─────────
+    niche_map = {
+        BTN_N_BEAUTY: "beauty", BTN_N_SELF: "selfworkers",
+        BTN_N_SERV: "services", BTN_N_AUTO: "automation",
+    }
+    if txt in niche_map:
+        mode = ctx.user_data.get("mode")
+        ctx.args = [niche_map[txt]]
+        if mode == "find_chats":
+            await _on_findchats(update, ctx)
+        elif mode == "find_channels":
+            await _on_findchannels(update, ctx)
+        else:
+            await bot.send_message(chat_id=chat_id,
+                text="Сначала выбери «🔍 Найти чаты» или «🔎 Найти каналы» из главного меню.")
+        ctx.user_data.pop("mode", None)
+        await _send_main_menu(chat_id, bot)
+        return
+
+    # ─── Подменю лидов ─────────────────────────────────────────
+    leads_map = {
+        BTN_L_HOT: ["hot"], BTN_L_WARM: ["warm"],
+        BTN_L_COLD: ["cold"], BTN_L_ALL: [],
+    }
+    if txt in leads_map:
+        ctx.args = leads_map[txt]
+        await _on_leads(update, ctx)
+        await _send_main_menu(chat_id, bot)
+        return
 
 
 async def _on_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -846,6 +1053,9 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("menu", _on_menu))
             app.add_handler(CommandHandler("comp", _on_comp))
             app.add_handler(CommandHandler("react", _on_react))
+            app.add_handler(MessageHandler(
+                filters.TEXT & ~filters.COMMAND, _on_reply_button
+            ))
             app.add_handler(CallbackQueryHandler(_on_callback))
             await app.initialize()
             await app.start()

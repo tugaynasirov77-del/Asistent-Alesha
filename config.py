@@ -48,5 +48,10 @@ AUTO_REPLY_MAX_AGE_MIN = int(os.getenv("AUTO_REPLY_MAX_AGE_MIN", "10"))
 
 # === Проактивный постинг (Алёша сам пишет в чатах, не только в ответ на лидов) ===
 PROACTIVE_ENABLED = os.getenv("PROACTIVE_ENABLED", "false").lower() == "true"
-PROACTIVE_PER_CHAT_DAY = int(os.getenv("PROACTIVE_PER_CHAT_DAY", "2"))
-PROACTIVE_MIN_HOURS_BETWEEN = int(os.getenv("PROACTIVE_MIN_HOURS_BETWEEN", "4"))  # пауза в одном чате
+PROACTIVE_PER_CHAT_DAY = int(os.getenv("PROACTIVE_PER_CHAT_DAY", "1"))
+PROACTIVE_MIN_HOURS_BETWEEN = int(os.getenv("PROACTIVE_MIN_HOURS_BETWEEN", "20"))
+# Минимальная пауза между ЛЮБЫМИ двумя постами (в разных чатах), секунд
+PROACTIVE_MIN_GAP_SEC = int(os.getenv("PROACTIVE_MIN_GAP_SEC", "300"))   # 5 мин
+PROACTIVE_MAX_GAP_SEC = int(os.getenv("PROACTIVE_MAX_GAP_SEC", "1800"))  # 30 мин
+PROACTIVE_DAY_START_H = int(os.getenv("PROACTIVE_DAY_START_H", "9"))
+PROACTIVE_DAY_END_H = int(os.getenv("PROACTIVE_DAY_END_H", "22"))

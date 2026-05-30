@@ -86,44 +86,90 @@ async def _generate_proactive_message(chat_title: str, context_msgs: list[str]) 
 
 
 async def proactive_loop(user_client):
-    """Главный цикл: спит, выбирает чат, постит."""
-    from config import (
-        PROACTIVE_PER_CHAT_DAY, PROACTIVE_MIN_HOURS_BETWEEN,
-    )
+    """Главный цикл: ежедневно постит в каждый чат по 1 разу со случайными паузами
+    в дневное окно. Минимальный гэп между ANY двумя постами — чтобы Telegram не палил."""
+    from datetime import timedelta
     import config as _cfg
-    from db import list_dynamic_chats
+    from db import (
+        list_dynamic_chats, proactive_posts_in_chat_24h,
+    )
 
     log.info("Proactive loop started")
     while True:
         try:
             if not _cfg.PROACTIVE_ENABLED:
-                await asyncio.sleep(600)
+                await asyncio.sleep(300)
                 continue
 
-            # ночью не постим (МСК 0-8)
-            hour = datetime.now().hour
-            if hour < 8 or hour >= 23:
-                await asyncio.sleep(1800)  # 30 минут
+            now = datetime.now()
+            start_h = _cfg.PROACTIVE_DAY_START_H
+            end_h = _cfg.PROACTIVE_DAY_END_H
+
+            # за окном дня — спим до утра
+            if now.hour < start_h:
+                next_run = now.replace(hour=start_h, minute=random.randint(0, 30),
+                                       second=0, microsecond=0)
+                wait = (next_run - now).total_seconds()
+                log.info("Proactive: ночь, сплю до %s (%.0f мин)", next_run, wait / 60)
+                await asyncio.sleep(wait)
+                continue
+            if now.hour >= end_h:
+                tomorrow = now + timedelta(days=1)
+                next_run = tomorrow.replace(hour=start_h, minute=random.randint(0, 30),
+                                            second=0, microsecond=0)
+                wait = (next_run - now).total_seconds()
+                log.info("Proactive: уже вечер, сплю до %s (%.0f мин)", next_run, wait / 60)
+                await asyncio.sleep(wait)
                 continue
 
+            # все известные чаты
             chats = await list_dynamic_chats()
             if not chats:
                 await asyncio.sleep(1800)
                 continue
 
-            # выбираем случайный чат
-            random.shuffle(chats)
-            posted = False
-            for uname in chats:
-                if await _try_post_to_chat(user_client, uname, PROACTIVE_PER_CHAT_DAY,
-                                            PROACTIVE_MIN_HOURS_BETWEEN):
-                    posted = True
+            # отфильтруем те где сегодня уже постили
+            pending: list[str] = []
+            for u in chats:
+                cnt = await proactive_posts_in_chat_24h(u)
+                if cnt < _cfg.PROACTIVE_PER_CHAT_DAY:
+                    pending.append(u)
+
+            if not pending:
+                # все на сегодня сделаны — спим до завтра
+                tomorrow = now + timedelta(days=1)
+                next_run = tomorrow.replace(hour=start_h, minute=random.randint(0, 30),
+                                            second=0, microsecond=0)
+                wait = (next_run - now).total_seconds()
+                log.info("Proactive: на сегодня всё сделано (%d чатов), сплю до %s",
+                         len(chats), next_run)
+                await asyncio.sleep(wait)
+                continue
+
+            random.shuffle(pending)
+            log.info("Proactive: за день надо запостить в %d чатов", len(pending))
+
+            # постим по одному с случайной задержкой между
+            for i, uname in enumerate(pending):
+                if not _cfg.PROACTIVE_ENABLED:
+                    log.info("Proactive disabled — выхожу из цикла")
+                    break
+                # проверка времени
+                hr = datetime.now().hour
+                if hr >= end_h:
+                    log.info("Proactive: вышли за окно дня, остаток на завтра (%d чатов)",
+                             len(pending) - i)
                     break
 
-            # пауза до следующей попытки: 60-150 минут
-            delay = random.uniform(3600, 9000)
-            log.info("Proactive next attempt in %.0f min", delay / 60)
-            await asyncio.sleep(delay)
+                await _try_post_to_chat(user_client, uname,
+                                        _cfg.PROACTIVE_PER_CHAT_DAY,
+                                        _cfg.PROACTIVE_MIN_HOURS_BETWEEN)
+
+                # случайная пауза до следующего поста
+                gap = random.uniform(_cfg.PROACTIVE_MIN_GAP_SEC, _cfg.PROACTIVE_MAX_GAP_SEC)
+                log.info("Proactive: пауза %.0f мин до следующего чата", gap / 60)
+                await asyncio.sleep(gap)
+
         except Exception as e:
             log.exception("Proactive loop error: %s", e)
             await asyncio.sleep(600)

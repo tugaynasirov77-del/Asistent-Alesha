@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS leads (
 CREATE TABLE IF NOT EXISTS dynamic_chats (
     username TEXT PRIMARY KEY,
     added_by INTEGER,
-    added_at TEXT
+    added_at TEXT,
+    joined_at TEXT  -- когда userbot вступил (null = ещё нет)
 );
 
 CREATE TABLE IF NOT EXISTS seen_messages (
@@ -79,6 +80,11 @@ async def log_auto_reply(lead_id: int, chat_id: int, reply_message_id: int, text
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript(SCHEMA)
+        # миграция: добавляем joined_at если её ещё нет
+        try:
+            await db.execute("ALTER TABLE dynamic_chats ADD COLUMN joined_at TEXT")
+        except Exception:
+            pass  # уже есть
         await db.commit()
 
 
@@ -128,6 +134,25 @@ async def list_dynamic_chats() -> list[str]:
         async with db.execute("SELECT username FROM dynamic_chats ORDER BY username") as cur:
             rows = await cur.fetchall()
     return [r[0] for r in rows]
+
+
+async def list_unjoined_chats() -> list[str]:
+    """Только те чаты, в которые userbot ещё не вступал."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT username FROM dynamic_chats WHERE joined_at IS NULL ORDER BY username"
+        ) as cur:
+            rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
+async def mark_chat_joined(username: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE dynamic_chats SET joined_at = ? WHERE username = ?",
+            (datetime.utcnow().isoformat(), username.lower()),
+        )
+        await db.commit()
 
 
 async def lead_stats(hours: int) -> dict:

@@ -15,6 +15,7 @@ from db import (
     add_subscriber, all_subscribers, remove_subscriber,
     leads_since, lead_stats,
     add_dynamic_chat, remove_dynamic_chat, list_dynamic_chats,
+    list_unjoined_chats, mark_chat_joined,
 )
 from claude_client import regenerate_draft
 
@@ -242,13 +243,20 @@ async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ChannelsTooMuchError, UserAlreadyParticipantError, ChannelPrivateError,
         InviteRequestSentError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError,
     )
-    chats = await list_dynamic_chats()
+    chats = await list_unjoined_chats()
+    total_known = len(await list_dynamic_chats())
     if not chats:
-        await update.message.reply_text("Список dynamic_chats пуст.")
+        await update.message.reply_text(
+            f"✨ Все {total_known} чатов уже отмечены как «вступил». "
+            f"Если ты ВРУЧНУЮ вступил в новые после /joinall — просто добавь их "
+            f"через /add username, либо /discover.\n\n"
+            f"Принудительно проверить заново можно через /joinall_force"
+        )
         return
     await update.message.reply_text(
-        f"Начинаю вступать в {len(chats)} чатов с паузой 40-90с между ними.\n"
-        f"Буду писать отчёт по мере прогресса. Не отключай Алёшу."
+        f"Начинаю вступать в {len(chats)} НОВЫХ чатов "
+        f"(из {total_known} в БД, остальные уже отмечены).\n"
+        f"Пауза 40-90с между ними. Отчёт по ходу."
     )
     joined, already, skipped, errors = 0, 0, 0, 0
     for i, uname in enumerate(chats, 1):
@@ -257,18 +265,20 @@ async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await user_client(__import__(
                 "telethon.tl.functions.channels", fromlist=["JoinChannelRequest"]
             ).JoinChannelRequest(entity))
+            await mark_chat_joined(uname)
             joined += 1
             status = "✅ вступил"
         except UserAlreadyParticipantError:
+            await mark_chat_joined(uname)  # запомним чтобы не дёргать снова
             already += 1
-            status = "ℹ️ уже состоит"
+            status = "ℹ️ уже состоит — отметил"
         except (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError) as e:
             skipped += 1
             status = f"⏭ пропущен ({type(e).__name__})"
         except FloodWaitError as e:
             await update.message.reply_text(
-                f"⚠️ FloodWait {e.seconds}с. Останавливаюсь на чате {uname}. "
-                f"Попробуй /joinall позже."
+                f"⚠️ FloodWait {e.seconds}с. Останавливаюсь на @{uname}. "
+                f"Запусти /joinall ещё раз — пойдёт с того же места."
             )
             return
         except Exception as e:
@@ -276,10 +286,9 @@ async def _on_joinall(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             status = f"❌ ошибка: {e}"
         await update.message.reply_text(f"[{i}/{len(chats)}] @{uname}: {status}")
         if i < len(chats):
-            delay = _random.uniform(40, 90)
-            await _asyncio.sleep(delay)
+            await _asyncio.sleep(_random.uniform(40, 90))
     await update.message.reply_text(
-        f"🏁 Готово.\nВступил: {joined}\nУже состоял: {already}\n"
+        f"🏁 Готово.\nВступил: {joined}\nУже состоял (отметил): {already}\n"
         f"Пропущен: {skipped}\nОшибки: {errors}"
     )
 

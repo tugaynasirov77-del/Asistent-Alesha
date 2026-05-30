@@ -23,11 +23,11 @@ log = logging.getLogger(__name__)
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "daniil_prim")
 CHANNEL_URL = f"https://t.me/{CHANNEL_USERNAME}"
 
-PROFILE_FIRST_NAME = os.getenv("PROFILE_FIRST_NAME", "Даниил")
-PROFILE_LAST_NAME = os.getenv("PROFILE_LAST_NAME", "| AI-автоматизация")
+PROFILE_FIRST_NAME = os.getenv("PROFILE_FIRST_NAME", "Даниил Прим")
+PROFILE_LAST_NAME = os.getenv("PROFILE_LAST_NAME", "| Liva ai")
 PROFILE_BIO = os.getenv(
     "PROFILE_BIO",
-    f"Делаю AI-агентов и автоматизирую бизнес. Кейсы → t.me/{CHANNEL_USERNAME}",
+    f"Liva ai — AI-админ для мастеров. Кейсы → t.me/{CHANNEL_USERNAME}",
 )
 
 REACTIONS = ["🔥", "❤️", "👍", "💯", "🤯"]
@@ -94,7 +94,8 @@ def register_own_channel_handler(user_client):
 
 # ─── (б) Smart-комментарии под постами конкурентов ───────────────────
 
-_COMMENT_PROMPT = """Ты — эксперт по AI-автоматизации (от лица Тугая Насирова, @prim_daniil).
+_COMMENT_PROMPT = """Ты комментируешь от лица Даниила Прима (@prim_daniil), фаундера Liva ai.
+Стиль — экспертный, от команды, не одиночки. Используй «мы», когда речь о продукте.
 Под постом в Telegram-канале нужно написать ЭКСПЕРТНЫЙ комментарий, который:
 - Даёт реальную пользу (факт, цифра, нюанс, отсылка к опыту) — не повторяет пост
 - Не выглядит рекламой

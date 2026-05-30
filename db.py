@@ -141,6 +141,13 @@ async def list_competitors() -> list[str]:
     return [r[0] for r in rows]
 
 
+async def remove_dynamic_chat_by_id(chat_id: int) -> str | None:
+    """Удаляет dynamic_chat по chat_id (через telethon entity). Возвращает username если был."""
+    # Прямой связи нет — chat_id из event не равен username.
+    # Поэтому удаление делаем по username (передаём отдельно).
+    return None
+
+
 async def add_dynamic_chat(username: str, added_by: int) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         try:

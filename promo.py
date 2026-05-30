@@ -148,18 +148,31 @@ def register_own_channel_handler(user_client):
 
 # ─── (б) Smart-комментарии под постами конкурентов ───────────────────
 
-_COMMENT_PROMPT = """Ты комментируешь от лица Даниила Прима (@prim_daniil), фаундера Liva ai.
-Стиль — экспертный, от команды, не одиночки. Используй «мы», когда речь о продукте.
-Под постом в Telegram-канале нужно написать ЭКСПЕРТНЫЙ комментарий, который:
-- Даёт реальную пользу (факт, цифра, нюанс, отсылка к опыту) — не повторяет пост
-- Не выглядит рекламой
-- 1-3 предложения максимум, без эмодзи-спама
-- Звучит как живой эксперт, не как маркетолог
+_COMMENT_PROMPT = """Ты пишешь комментарий под постом в Telegram-канале от лица Даниила Прима (@prim_daniil).
+ВАЖНО: комментарий должен звучать как живая реплика, никто не должен заподозрить бота.
 
-В 20% случаев ТОНКО упоминай свой канал t.me/{ch} в конце ("у себя в канале как раз
-разбирал..." / "подробнее у меня"). В остальных 80% — без упоминаний, чистая польза.
+Жёсткие правила:
+- Максимум 1-2 коротких предложения (15-20 слов)
+- НИКАКИХ эмодзи в начале/конце
+- НИКАКИХ "Согласен", "Полностью поддерживаю", "Спасибо за пост"
+- НИКАКИХ "наша команда", "мы предлагаем"
+- Разговорный стиль с маленькой буквы можно, без точки в конце можно
+- Добавь конкретику: цифру, личный опыт, нюанс — не общие фразы
 
-Тема канала: AI, бизнес-автоматизация, IT, no-code.
+В 15% случаев ТОНКО упоминай канал t.me/{ch}:
+"у меня в канале разбор похожий был", "у себя писал про это".
+В остальных 85% — без упоминаний, чистая польза.
+
+ПЛОХО (палится):
+"Согласен с вами! Очень важно автоматизировать запись клиентов.
+В моём канале t.me/livaai как раз есть подробный разбор этой темы 🔥"
+
+ХОРОШО:
+"у нас 47% записи приходит после 19, без автоответчика реально теряешь"
+
+или (с упоминанием):
+"да, мы это в одном из салонов считали — около 30к в месяц выходит.
+писал про это в @livaai"
 """
 
 
@@ -202,7 +215,21 @@ async def comment_on_competitor_post(user_client, event):
         log.info("Smart comment posted under @%s/%s",
                  getattr(event.chat, 'username', '?'), event.message.id)
     except Exception as e:
-        log.warning("Smart comment failed: %s", e)
+        err_name = type(e).__name__
+        if err_name in {"ChatWriteForbiddenError", "UserBannedInChannelError",
+                        "ChannelPrivateError", "UserKickedError"}:
+            chat = await event.get_chat()
+            uname = (getattr(chat, "username", None) or "").lower()
+            if uname:
+                COMPETITORS.discard(uname)
+                try:
+                    from db import remove_competitor
+                    await remove_competitor(uname)
+                except Exception:
+                    pass
+                log.warning("Removed competitor @%s due to %s", uname, err_name)
+        else:
+            log.warning("Smart comment failed: %s", e)
 
 
 def register_competitor_handlers(user_client):

@@ -123,8 +123,7 @@ async def _maybe_auto_reply(event, lead_id: int, lead: dict):
     if count >= AUTO_REPLY_PER_CHAT_DAY:
         log.info("Auto-reply skip lead=%s: chat %s reached daily limit %s",
                  lead_id, chat_id, AUTO_REPLY_PER_CHAT_DAY)
-        await send_auto_reply_notice(lead_id, "⚠️ Лимит авто-ответов в этом чате на сутки исчерпан, не отвечаю.")
-        return
+        return  # тихо скипаем, не шумим в чат подписчиков
 
     draft = lead.get("draft_reply") or ""
     if not draft.strip():
@@ -139,12 +138,28 @@ async def _maybe_auto_reply(event, lead_id: int, lead: dict):
         await log_auto_reply(lead_id, chat_id, sent.id, draft)
         await send_auto_reply_notice(
             lead_id,
-            f"📤 <b>Авто-ответ отправлен в чат</b> (за сутки в этом чате: {count + 1}/{AUTO_REPLY_PER_CHAT_DAY})",
+            f"📤 <b>Авто-ответ отправлен в чат</b> ({count + 1}/{AUTO_REPLY_PER_CHAT_DAY} за сутки)",
         )
         log.info("Auto-reply sent lead=%s msg_id=%s", lead_id, sent.id)
     except Exception as e:
-        log.exception("Auto-reply failed lead=%s: %s", lead_id, e)
-        await send_auto_reply_notice(lead_id, f"⚠️ Не смог отправить авто-ответ: {e}")
+        err_name = type(e).__name__
+        # Бан / кик / запрет писать → удаляем чат из мониторинга
+        if err_name in {"ChatWriteForbiddenError", "UserBannedInChannelError",
+                        "ChannelPrivateError", "UserKickedError",
+                        "SlowModeWaitError"}:
+            chat_uname = (lead.get("chat_title") or "").lower()
+            chat_from_event = await event.get_chat()
+            real_uname = (getattr(chat_from_event, "username", None) or "").lower()
+            from db import remove_dynamic_chat
+            removed = await remove_dynamic_chat(real_uname) if real_uname else False
+            await send_auto_reply_notice(
+                lead_id,
+                f"🚫 В чате @{real_uname or chat_uname} нельзя писать ({err_name}). "
+                f"{'Удалил из мониторинга.' if removed else 'Не нашёл в dynamic_chats.'}"
+            )
+            log.warning("Removed chat @%s due to %s", real_uname, err_name)
+        else:
+            log.exception("Auto-reply failed lead=%s: %s", lead_id, e)
 
 
 async def run_monitor():

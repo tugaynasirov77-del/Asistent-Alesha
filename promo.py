@@ -46,12 +46,41 @@ async def reload_competitors_from_db():
     log.info("COMPETITORS loaded from DB: %s items", len(items))
 
 
-async def add_competitor_persisted(username: str) -> bool:
-    """Добавляет в БД И в кэш. Возвращает True если новый."""
+async def add_competitor_persisted(username: str, user_client=None) -> tuple[bool, str]:
+    """Добавляет канал в БД, в кэш и подписывает userbot на него.
+    Без подписки Telethon не получает новые посты.
+
+    Returns: (is_new, status_msg)
+    """
     from db import add_competitor
-    ok = await add_competitor(username)
-    COMPETITORS.add(username.lower())
-    return ok
+    uname = username.lstrip("@").lower()
+    ok = await add_competitor(uname)
+    COMPETITORS.add(uname)
+
+    join_status = ""
+    if user_client is not None:
+        try:
+            from telethon.tl.functions.channels import JoinChannelRequest
+            from telethon.errors import (
+                UserAlreadyParticipantError, ChannelPrivateError,
+                InviteRequestSentError, FloodWaitError,
+            )
+            entity = await user_client.get_entity(uname)
+            try:
+                await user_client(JoinChannelRequest(entity))
+                join_status = "✅ подписался на канал"
+            except UserAlreadyParticipantError:
+                join_status = "ℹ️ уже подписан"
+            except InviteRequestSentError:
+                join_status = "📨 заявка отправлена (приватный)"
+            except FloodWaitError as e:
+                join_status = f"⏳ FloodWait {e.seconds}с — попробую позже"
+            except ChannelPrivateError:
+                join_status = "🔒 канал приватный — не пускает"
+        except Exception as e:
+            join_status = f"⚠️ не удалось подписаться: {e}"
+
+    return ok, join_status
 
 
 async def remove_competitor_persisted(username: str) -> bool:

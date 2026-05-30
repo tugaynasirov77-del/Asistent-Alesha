@@ -635,6 +635,53 @@ async def _on_setprofile(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Ошибка: {e}")
 
 
+async def _subscribe_to_competitors(update, ctx):
+    """Подписывает userbot на все каналы из COMPETITORS — для уже добавленных,
+    где раньше подписки не было. С паузой 30-60с между ними."""
+    import asyncio as _asyncio
+    import random as _random
+    from monitor import user_client
+    from promo import COMPETITORS
+    from telethon.tl.functions.channels import JoinChannelRequest
+    from telethon.errors import (
+        UserAlreadyParticipantError, ChannelPrivateError,
+        InviteRequestSentError, FloodWaitError,
+    )
+    items = sorted(COMPETITORS)
+    if not items:
+        await update.message.reply_text("Список каналов для smart-комментариев пуст.")
+        return
+    await update.message.reply_text(
+        f"📡 Подписываюсь на {len(items)} каналов из smart-комментариев.\n"
+        f"Пауза 30-60с между ними."
+    )
+    for i, uname in enumerate(items, 1):
+        try:
+            entity = await user_client.get_entity(uname)
+            await user_client(JoinChannelRequest(entity))
+            status = "✅ подписался"
+        except UserAlreadyParticipantError:
+            status = "ℹ️ уже подписан"
+        except InviteRequestSentError:
+            status = "📨 заявка отправлена"
+        except FloodWaitError as e:
+            await update.message.reply_text(
+                f"⏳ FloodWait {e.seconds}с — стоп на @{uname}. Повторишь позже."
+            )
+            return
+        except Exception as e:
+            status = f"⚠️ {e}"
+        await update.message.reply_text(f"[{i}/{len(items)}] @{uname}: {status}")
+        if i < len(items):
+            await _asyncio.sleep(_random.uniform(30, 60))
+    await update.message.reply_text("🏁 Готово.")
+
+
+async def _on_subcomps(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Подписаться userbot'ом на все каналы из COMPETITORS."""
+    await _subscribe_to_competitors(update, ctx)
+
+
 async def _on_comp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     """Управление списком каналов конкурентов для smart-комментариев."""
     from promo import COMPETITORS, PROMO_FLAGS
@@ -655,8 +702,9 @@ async def _on_comp(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if cmd == "add" and len(ctx.args) >= 2:
         u = ctx.args[1].lstrip("@").lower()
         from promo import add_competitor_persisted
-        await add_competitor_persisted(u)
-        await update.message.reply_text(f"✅ Добавлен @{u}. Сохранён в БД.")
+        from monitor import user_client
+        ok, join_status = await add_competitor_persisted(u, user_client=user_client)
+        await update.message.reply_text(f"✅ @{u} добавлен.\n{join_status}")
     elif cmd == "remove" and len(ctx.args) >= 2:
         u = ctx.args[1].lstrip("@").lower()
         from promo import remove_competitor_persisted
@@ -994,9 +1042,11 @@ async def _on_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         uname = sid.lower()
         if action == "dca":
             from promo import add_competitor_persisted
-            await add_competitor_persisted(uname)
+            from monitor import user_client
+            ok, join_status = await add_competitor_persisted(uname, user_client=user_client)
             await query.edit_message_text(
-                f"✅ @{uname} добавлен в smart-комменты.\n"
+                f"✅ @{uname} в smart-комментах.\n"
+                f"{join_status}\n"
                 f"Активировать: жми «🎙 Smart-комменты» в меню."
             )
         elif action == "dct":
@@ -1100,6 +1150,7 @@ async def init_bot_forever() -> Application:
             app.add_handler(CommandHandler("findchats", _on_findchats))
             app.add_handler(CommandHandler("menu", _on_menu))
             app.add_handler(CommandHandler("comp", _on_comp))
+            app.add_handler(CommandHandler("subcomps", _on_subcomps))
             app.add_handler(CommandHandler("react", _on_react))
             app.add_handler(MessageHandler(
                 filters.TEXT & ~filters.COMMAND, _on_reply_button
